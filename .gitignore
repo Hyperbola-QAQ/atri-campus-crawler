@@ -1,0 +1,22 @@
+# pycache
+__pycache__/
+
+# .vscode
+.vscode/
+
+# .pytest_cache
+.pytest_cache/
+.coverage
+
+# /tmp
+/tmp/
+
+# /logs
+logs/
+
+# .~lock开头的所有文件
+.~lock.*
+
+# .env
+.env
+.env.*
