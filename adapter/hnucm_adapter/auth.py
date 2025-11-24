@@ -11,15 +11,9 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 
-# 修改Redis客户端初始化，添加异常处理
-try:
-    redis_client: Optional[Redis] = get_redis_client()
-except Exception as e:
-    redis_client = None
-    logger.warning(f"Redis连接失败，将跳过缓存功能: {e}")
-
-
-async def save_cookies_to_redis(school_name: str, username: str, cookies: Cookies) -> None:
+async def save_cookies_to_redis(
+    school_name: str, username: str, cookies: Cookies
+) -> None:
     """
     将cookies保存到Redis中
 
@@ -28,7 +22,10 @@ async def save_cookies_to_redis(school_name: str, username: str, cookies: Cookie
         username (str): 用户名
         cookies (Cookies): HTTP cookies对象
     """
-    if redis_client is None:
+    try:
+        redis_client: Optional[Redis] = await get_redis_client()
+    except Exception as e:
+        redis_client = None
         return
 
     key: str = f"cookies:{school_name}:{username}"
@@ -180,8 +177,10 @@ async def get_cookies_from_redis(
     Returns:
         Cookies: 获取到的cookies对象
     """
-    if redis_client is None:
-        logger.debug("Redis客户端不可用，无法从缓存获取Cookie")
+    try:
+        redis_client: Optional[Redis] = await get_redis_client()
+    except Exception as e:
+        redis_client = None
         return Cookies()
 
     try:

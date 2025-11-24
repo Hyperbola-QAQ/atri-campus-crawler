@@ -1,5 +1,6 @@
 # pycache
 __pycache__/
+nacos_cache/
 
 # .vscode
 .vscode/
