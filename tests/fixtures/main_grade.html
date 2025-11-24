@@ -1,0 +1,1611 @@
+<!DOCTYPE html
+    PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<head id="headerid1">
+    <base target='_self'>
+    <title>学生个人考试成绩</title>
+    <meta http-equiv="pragma" content="no-cache">
+    <meta http-equiv="cache-control" content="no-cache">
+    <meta http-equiv="expires" content="0">
+    <meta http-equiv="keywords" content="湖南强智科技教务系统">
+    <meta http-equiv="description" content="湖南强智科技教务系统">
+    <meta http-equiv="X-UA-Compatible" content="IE=EmulateIE8" />
+    <script type="text/javascript" src="/jsxsd/js/jquery-min.js" language="javascript"></script>
+    <script type="text/javascript" src="/jsxsd/js/common.js" language="javascript"></script>
+    <script type="text/javascript" src="/jsxsd/js/iepngfix_tilebg.js" language="javascript"></script>
+
+    <script type="text/javascript" src="/jsxsd/js/jquery.autocomplete.min.js" language="javascript"></script>
+    <script type="text/javascript" src="/jsxsd/assets/js/jquery.min.js"></script>
+    <script type="text/javascript" src="/jsxsd/assets/plugins/layui/laydate.js"></script>
+    <script src="/jsxsd/assets/plugins/layui/layui.all.js"></script>
+    <script type="text/javascript" src="/jsxsd/assets/plugins/pagination/pagination.js" language="javascript"></script>
+    <link href="/jsxsd/framework/images/common.css" rel="stylesheet" type="text/css" />
+    <link href="/jsxsd/framework/images/blue.css" rel="stylesheet" type="text/css" id="link_theme" />
+    <link href="/jsxsd/framework/images/workstation.css" rel="stylesheet" type="text/css" />
+    <link href="/jsxsd/css/easyui.css" rel="stylesheet" type="text/css" />
+    <link href="/jsxsd/css/jquery.autocomplete.css" rel="stylesheet" type="text/css" />
+
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/css/modules/reset-table-style.css" />
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/css/common.css" />
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/css/ui.css" />
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/plugins/layui/layui.css">
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/plugins/layui/laydate.css" />
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/plugins/pagination/pagination.css" />
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/css/modules/timetable-inquire.css" />
+    <link rel="stylesheet" type="text/css" href="/jsxsd/assets/css/modules/query-condition-div.css" />
+</head>
+<style type="text/css">
+    .loading-mask {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        display: none;
+    }
+    .loading-content {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #333;
+        text-align: center;
+        background-color: #fff;
+        padding-top: 16px;
+        padding: 20px;
+        border-radius: 2px;
+    }
+    .spinner {
+        margin: 20px auto;
+        width: 40px;
+        height: 40px;
+        border: 4px solid #f3f3f3;
+        border-radius: 50%;
+        border-top: 4px solid #3498db;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        0% {
+            transform: rotate(0deg);
+        }
+
+        100% {
+            transform: rotate(360deg);
+        }
+    }
+</style>
+<iframe id="notSession" name="notSession" style="display: none;" src=""></iframe>
+<input type="hidden" name="shouyedizhi" id="shouyedizhi" value="/jsxsd" />
+<div class="loading-mask" id="loadingMask-dc" style="display:none">
+    <div class="loading-content">
+        <div class="spinner"></div>
+        <h3>数据导出中，请稍候...</h3>
+    </div>
+</div>
+<div class="loading-mask" id="loadingMask-dr" style="display:none">
+    <div class="loading-content">
+        <div class="spinner"></div>
+        <h3>数据导入中，请稍候...</h3>
+    </div>
+</div>
+<script type="text/javascript">
+    jQuery(document).ready(function () {
+        window.setInterval(function () {
+            document.getElementById("notSession").src = "/jsxsd/framework/blankPage.jsp";
+        }, 1000 * 60 * 10);
+
+
+    });
+
+
+</script>
+<!--  -->
+<div>
+    <!-- <div class="Nsb_r_title"><a href="/jsxsd/framework/main.jsp"">首页</a> » 考试成绩 » 课程成绩查询 » 查询列表</div>
+	<input type="button" id="btn_back" class="button" value="返 回" onclick="window.location.href='/jsxsd/kscj/cjcx_query';"/> -->
+    查询条件：开课时间【2024-2025-2】&nbsp;&nbsp;
+
+    <font color="red"></font>&nbsp;&nbsp;&nbsp;&nbsp;
+    <font color="red">
+        <span>平均学分绩点显示为?说明：统计规则发生改变或未计算时，需重新统计。：</span>
+    </font>
+    <!--
+		user:promition fucecode="NEW_XSD_XJCJ_WDCJ_KCCJCX_XSCJKDY">
+			<input type="button" id="btn_xscjk" value="学生成绩卡  " onclick="printXscjk(1);" class="button el-button"/>
+		/user:promition>
+		user:promition fucecode="NEW_XSD_XJCJ_WDCJ_KCCJCX_BJGXSCJKDY">
+			<input type="button" id="btn_bjgxscjk" value="不及格学生成绩卡  " onclick="printXscjk(2);"   class="button el-button"/>
+		/user:promition>
+		-->
+
+    <table id="dataList" width="100%" border="0" cellspacing="0" cellpadding="0" class="layui-table">
+        <tr>
+            <th class="Nsb_r_list_thb" style="width: 35px;">序号</th>
+            <th class="Nsb_r_list_thb" style="width: 140px;">开课学期</th>
+            <th class="Nsb_r_list_thb" style="width: 110px;">课程编号</th>
+            <th class="Nsb_r_list_thb" style="width: 110px;">课程名称</th>
+
+
+            <th class="Nsb_r_list_thb" style="width: 60px;">
+                成绩</th>
+
+            <th class="Nsb_r_list_thb" style="width: 50px;">成绩标识</th>
+
+            <th class="Nsb_r_list_thb" style="width: 50px;">学分</th>
+            <th class="Nsb_r_list_thb" style="width: 50px;">总学时</th>
+
+            <th class="Nsb_r_list_thb" style="width: 50px;">绩点</th>
+
+            <th class="Nsb_r_list_thb" style="width: 110px;">补重学期</th>
+
+
+            <th class="Nsb_r_list_thb" style="width: 60px;">考核方式</th>
+            <th class="Nsb_r_list_thb" style="width: 60px;">考试性质</th>
+            <th class="Nsb_r_list_thb" style="width: 60px;">课程属性</th>
+
+
+            <th class="Nsb_r_list_thb" style="width: 80px;">课程性质</th>
+
+            <th class="Nsb_r_list_thb" style="width: 80px;">通选课类别</th>
+
+
+            <th class="Nsb_r_list_thb" style="width: 80px;">通选课模块</th>
+
+
+        </tr>
+
+        <tr>
+            <td>1</td>
+            <td>2024-2025-2</td>
+            <td align="left">A130501000</td>
+            <td align="left">习近平新时代中国特色社会主义思想概论</td>
+
+            <!-- 控制成绩显示111 -->
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004887&cj0708id=3A44123CB43A92E4E063480A0A0AC640&zcj=77',700,500)">
+                    77
+                </a>
+            </td>
+            </td>
+
+            <td>
+            </td>
+
+            <td>3</td>
+            <td>48</td>
+            <!-- 控制绩点显示 -->
+            <td>2.7</td>
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>通识教育课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>2</td>
+            <td>2024-2025-2</td>
+            <td align="left">A130606000</td>
+            <td align="left">形势与政策（4）</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004879&cj0708id=3A8F747C5E085029E063480A0A0A6459&zcj=79',700,500)">
+
+                    79
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>0.5</td>
+            <td>8</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>2.9</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>通识教育课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>3</td>
+            <td>2024-2025-2</td>
+            <td align="left">A140501000</td>
+            <td align="left">体育（4）</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252000978&cj0708id=3B48CEC4C7F24EDAE063480A0A0A38C3&zcj=90',700,500)">
+
+                    90
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>2</td>
+            <td>32</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>4</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>通识教育课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>4</td>
+            <td>2024-2025-2</td>
+            <td align="left">A160101000</td>
+            <td align="left">大学生就业指导</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004895&cj0708id=3A5A6E9780A00356E063470A0A0A4FDA&zcj=90',700,500)">
+
+                    90
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>1.5</td>
+            <td>24</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>4</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>通识教育课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>5</td>
+            <td>2024-2025-2</td>
+            <td align="left">B080406304</td>
+            <td align="left">计算机组成原理与汇编语言</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004892&cj0708id=38A2D84A3AAF1706E063480A0A0A6053&zcj=90',700,500)">
+
+                    90
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>4</td>
+            <td>80</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>4</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>期末统考</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>专业基础课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>6</td>
+            <td>2024-2025-2</td>
+            <td align="left">C080204000</td>
+            <td align="left">Web技术（Java）</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004904&cj0708id=39B9874004A75D82E063470A0A0A0D83&zcj=80',700,500)">
+
+                    80
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>2.5</td>
+            <td>48</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>3</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>期末统考</td>
+            <td>正常考试</td>
+            <td>选修</td>
+
+
+            <td>专业基础课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>7</td>
+            <td>2024-2025-2</td>
+            <td align="left">C080416000</td>
+            <td align="left">移动应用开发</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252006446&cj0708id=398BE2B4EE89BAB2E063470A0A0A0F3D&zcj=93',700,500)">
+
+                    93
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>2</td>
+            <td>48</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>4.3</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>选修</td>
+
+
+            <td>专业基础课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>8</td>
+            <td>2024-2025-2</td>
+            <td align="left">D080214304</td>
+            <td align="left">计算机网络原理与应用</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004912&cj0708id=39ED1E5A08A4EEAEE063470A0A0A0ACE&zcj=70',700,500)">
+
+                    70
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>3.5</td>
+            <td>62</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>2</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>期末统考</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>专业课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>9</td>
+            <td>2024-2025-2</td>
+            <td align="left">D080222304</td>
+            <td align="left">人工智能原理</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004908&cj0708id=3AFF2213C3989B6AE063470A0A0A6C3A&zcj=86',700,500)">
+
+                    86
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>2.5</td>
+            <td>48</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>3.6</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>专业课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>10</td>
+            <td>2024-2025-2</td>
+            <td align="left">D080226304</td>
+            <td align="left">算法分析与设计</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004900&cj0708id=398CD206B85D6EDCE063480A0A0A667A&zcj=87',700,500)">
+
+                    87
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>2.5</td>
+            <td>44</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>3.7</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>期末统考</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>专业课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>11</td>
+            <td>2024-2025-2</td>
+            <td align="left">H00011200B</td>
+            <td align="left">插花艺术</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=&cj0708id=2027A2069E274B5EBBEA2B2870FE8F0B&zcj=98',700,500)">
+
+                    98
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>1</td>
+            <td>29</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>4.8</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>期末统考</td>
+            <td>正常考试</td>
+            <td>选修</td>
+
+
+            <td>通识教育课</td>
+
+
+
+
+
+
+
+
+            <td>线上通选课</td>
+
+
+            <td>艺术与美育</td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>12</td>
+            <td>2024-2025-2</td>
+            <td align="left">H00011400E</td>
+            <td align="left">食品安全</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=&cj0708id=5EF9211628544AD4B6A894A4D81F3CD4&zcj=97',700,500)">
+
+                    97
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>1</td>
+            <td>30</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>4.7</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>期末统考</td>
+            <td>正常考试</td>
+            <td>选修</td>
+
+
+            <td>通识教育课</td>
+
+
+
+
+
+
+
+
+            <td>线上通选课</td>
+
+
+            <td>自然与科学</td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>13</td>
+            <td>2024-2025-2</td>
+            <td align="left">K040101000</td>
+            <td align="left">基础医学概论</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252004883&cj0708id=397A5BEF4462E3DDE063470A0A0A49BD&zcj=87',700,500)">
+
+                    87
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>3</td>
+            <td>48</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>3.7</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>选修</td>
+
+
+            <td>专业拓展课</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+        <tr>
+            <td>14</td>
+            <td>2024-2025-2</td>
+            <td align="left">S080215304</td>
+            <td align="left">科研方法训练（医学数据分析等）</td>
+
+
+
+            <!-- 控制成绩显示111 -->
+
+
+
+
+
+            <td style="  "><!-- 小于60分不及格显示红色 -->
+
+
+
+                <a
+                    href="javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0101id=202301020304&jx0404id=202420252006442&cj0708id=39E6259F67AB3997E063470A0A0AA396&zcj=88',700,500)">
+
+                    88
+
+                </a>
+
+
+
+
+
+            </td>
+            </td>
+
+
+
+
+
+
+
+
+
+
+
+            <td>
+
+
+
+            </td>
+
+            <td>1</td>
+            <td>30</td>
+
+
+
+            <!-- 控制绩点显示 -->
+
+
+
+
+            <td>3.8</td>
+
+
+
+
+
+
+
+            <td></td>
+
+
+
+
+
+
+            <td>随堂考查</td>
+            <td>正常考试</td>
+            <td>必修</td>
+
+
+            <td>集中实践环节</td>
+
+
+
+
+
+
+
+
+            <td></td>
+
+
+            <td></td>
+
+
+
+
+
+        </tr>
+
+
+
+
+
+    </table>
+
+    <form action="" method="post" name="Form1" id="Form1"></form>
+    <form action="" name="Formfr" id="FormFr">
+        <input type="hidden" name="key" id="key" />
+    </form>
+</div>
+<br />
+<!--   -->
+<input id="PageContext" type="hidden" value="/jsxsd" />
+<script language="javascript">
+
+    //合并学年学期列
+    //jQuery("#dataList").rowspan(1);
+</script>
+<script language="javascript">
+
+    function printXscjk(type) {
+        document.Form1.action = "/jsxsd/kscj/printXscjk?dytype_11437=" + type;
+        document.Form1.target = "hidfrm";
+        document.Form1.submit();
+        document.Form1.target = "";
+    }
+
+    function queren() {
+        $.ajax({
+            type: "GET",
+            async: false,
+            url: "/jsxsd/kscj/cjcx_list_qr",
+            data: "",
+            dataType: "json",
+            success: function (msg) {
+                alert('确认成功！');
+                $("#btn_query").prop("disabled", "disabled");
+                $("#btn_query").val("已确认");
+            }
+        });
+    }
+
+    loadjs();
+    function loadjs() {
+        if ('' != '') {
+            alert('');
+        }
+    }
+    var vid = "";
+    var mb = "";
+    var id = "";
+    function rqdy_laosha2(ids, key, rqurl, func) {
+        vid = ids;
+        $("#key").val(key);
+        if (!document.getElementById("frjumpurl")) {
+            $('#FormFr').append("<input type='hidden' id='frjumpurl' name='frjumpurl'  value=''  />")
+        }
+        //dwrMonitor.getFrMbxx(key,getDataResult_fr);
+        $.ajax({
+            type: "post",
+            url: $("#PageContext").val() + "/kbxx/getFrmbxx",
+            data: $('#FormFr').serialize(),
+            dataType: "json",
+            success: function (data) {
+                //console.log(data);
+                if (data.success == false) {
+
+                } else {
+                    if (data.data == '') {
+                        setTimeout(func, 0);
+                    } else {
+                        mb = data.data.mb;
+                        id = data.data.ywinstanceidname;
+                        var url = "";
+                        if (mb.indexOf(".rpx") >= 0) {
+                            url = rqurl + "?rpx=/" + mb + "&xsxh=" + ids;
+
+                        }
+                        $("#Form2forFr").remove();
+                        $("<form></form>", {
+                            target: "_blank",
+                            action: url,
+                            id: "Form2forFr",
+                            name: "Form2forFr",
+                            method: "post",
+                        }).appendTo($("body"));
+                        if (id != null && id.indexOf(",") > 0) {
+                            var strs = new Array();
+                            strs = id.split(",");
+                            var idl = vid.split(",");
+                            for (var i = 0; i < strs.length; i++) {
+                                $("<input></input>", {
+                                    name: strs[i],
+                                    type: "hidden",
+                                    value: idl[i],
+                                }).appendTo($("#Form2forFr"));
+                                //url+="&"+strs[i]+"="+idl[i];
+                            }
+                        } else {
+                            $("<input></input>", {
+                                name: id,
+                                type: "hidden",
+                                value: vid,
+                            }).appendTo($("#Form2forFr"));
+                            //if(id!=null)url+="&"+id+"="+vid;
+                        }
+                        //url
+                        url += "&rpxHome=WEB-INF/reportFiles";
+                        //var str_url=window.btoa(url);
+                        //var base = new Base64();
+                        //var str_url=base.encode(url);
+                        //str_url=window.atob(str_url);
+                        //alert(str_url);
+                        $("#frjumpurl").val(url);
+                        document.getElementById("Form2forFr").submit();
+                        //JsOpenWin($("#PageContext").val()+"/fr/fr_index.jsp",1000,700);
+                    }
+                }
+
+            }
+        });
+    }
+</script>
