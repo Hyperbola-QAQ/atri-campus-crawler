@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 
+
 class GradeItem(BaseModel):
     # 课程代码
     course_code: Optional[str] = None

@@ -35,9 +35,9 @@ logger.add(
 logger.add(
     sink=LOGS_DIR / "app_debug.log",
     level="DEBUG",
-    rotation="100 MB",     # 每 100MB 创建一个新文件
-    retention="7 days",    # 保留最近 7 天的日志
-    compression="zip",     # 压缩旧日志
+    rotation="100 MB",  # 每 100MB 创建一个新文件
+    retention="7 days",  # 保留最近 7 天的日志
+    compression="zip",  # 压缩旧日志
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
 )
 
@@ -46,9 +46,9 @@ logger.add(
 logger.add(
     sink=LOGS_DIR / "app_info.log",
     level="INFO",
-    rotation="100 MB",     # 每 100MB 创建一个新文件
-    retention="7 days",    # 保留最近 7 天的日志
-    compression="zip",     # 压缩旧日志
+    rotation="100 MB",  # 每 100MB 创建一个新文件
+    retention="7 days",  # 保留最近 7 天的日志
+    compression="zip",  # 压缩旧日志
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
 )
 

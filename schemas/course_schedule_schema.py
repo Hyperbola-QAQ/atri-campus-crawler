@@ -3,14 +3,15 @@ from typing import Optional
 from enum import Enum
 
 
-class WeekdayEnum (str, Enum):
-    MONDAY = '1'
-    TUESDAY = '2'
-    WEDNESDAY = '3'
-    THURSDAY = '4'
-    FRIDAY = '5'
-    SATURDAY = '6'
-    SUNDAY = '7'
+class WeekdayEnum(str, Enum):
+    MONDAY = "1"
+    TUESDAY = "2"
+    WEDNESDAY = "3"
+    THURSDAY = "4"
+    FRIDAY = "5"
+    SATURDAY = "6"
+    SUNDAY = "7"
+
 
 class CourseScheduleItem(BaseModel):
     # 课程名称

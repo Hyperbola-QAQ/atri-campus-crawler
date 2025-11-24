@@ -2,24 +2,23 @@ import pytest
 import pytest_asyncio
 from pathlib import Path
 from adapter.hnucm_adapter import HNUCMAdapter
-from adapter.hnucm_adapter.profile import ProfileCrawler 
+from adapter.hnucm_adapter.profile import ProfileCrawler
 from utils.log import logger
 import dotenv
 import os
 
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_DIR = SCRIPT_DIR.parent
-dotenv.load_dotenv(PROJECT_DIR / '.env.test')
+dotenv.load_dotenv(PROJECT_DIR / ".env.test")
 
 
 class TestHNUCMAdapter:
-    username: str = os.getenv('HNUCM_ADAPTER_TEST_USERNAME') or ""
-    password: str = os.getenv('HNUCM_ADAPTER_TEST_PASSWORD') or ""
+    username: str = os.getenv("HNUCM_ADAPTER_TEST_USERNAME") or ""
+    password: str = os.getenv("HNUCM_ADAPTER_TEST_PASSWORD") or ""
 
     @pytest_asyncio.fixture
     async def adapter(self):
         return HNUCMAdapter()
-
 
     @pytest.mark.asyncio
     async def test_fetch_profile_xls(self, adapter: HNUCMAdapter) -> None:
@@ -43,12 +42,12 @@ class TestHNUCMAdapter:
     @pytest.mark.asyncio
     async def test_parse_profile_xls(self, adapter: HNUCMAdapter) -> None:
         profile_crawler = ProfileCrawler(
-            base_url=adapter.base_url, 
+            base_url=adapter.base_url,
             headers=adapter.headers,
             school_name=adapter.school_name,
             username=self.username,
         )
-        xls_path: Path = SCRIPT_DIR / 'fixtures' / 'HNUCM_202301020304_profile.xls'
+        xls_path: Path = SCRIPT_DIR / "fixtures" / "HNUCM_202301020304_profile.xls"
         profile: dict = await profile_crawler.parse_profile_xls(xls_path)
 
         logger.debug(profile)
@@ -62,12 +61,14 @@ class TestHNUCMAdapter:
 
     @pytest.mark.asyncio
     async def test_profile_crawler(self, adapter: HNUCMAdapter) -> None:
-        
+
         _, _, cookies = await adapter.login(self.username, self.password)
         if not cookies:
             pytest.skip("登录失败，跳过测试")
-        
-        _, _, profile = await adapter.get_profile(cookies=cookies, username=self.username)
+
+        _, _, profile = await adapter.get_profile(
+            cookies=cookies, username=self.username
+        )
 
         logger.debug(profile)
 

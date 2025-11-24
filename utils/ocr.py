@@ -5,6 +5,7 @@ import base64
 # 初始化 ddddocr 识别器
 ocr = ddddocr.DdddOcr()
 
+
 async def img2txt(img: str) -> str:
     """
     使用 ddddocr 自动识别验证码图片
@@ -31,7 +32,7 @@ async def img2txt(img: str) -> str:
         # 验证码长度检查
         if len(text) != 4:
             raise ValueError("验证码长度错误")
-        
+
         return text
 
     except ValueError as ve:
