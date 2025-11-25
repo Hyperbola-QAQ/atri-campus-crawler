@@ -18,6 +18,7 @@ logs/
 # .~lock开头的所有文件
 .~lock.*
 
-# .env
+# .env 保留example
 .env
 .env.*
+!/.env.example
