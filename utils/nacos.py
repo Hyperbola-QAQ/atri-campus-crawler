@@ -1,20 +1,11 @@
 from dotenv import load_dotenv
 import os
 from v2.nacos import (
-    NacosNamingService,
     ClientConfigBuilder,
     GRPCConfig,
-    Instance,
-    SubscribeServiceParam,
-    RegisterInstanceParam,
-    DeregisterInstanceParam,
-    BatchRegisterInstanceParam,
-    GetServiceParam,
-    ListServiceParam,
-    ListInstanceParam,
     NacosConfigService,
-    ConfigParam,
 )
+from utils.log import logger
 
 
 load_dotenv(".env")
@@ -23,8 +14,8 @@ load_dotenv(f'.env.{os.getenv("ENVIRONMENT")}')
 
 client_config = (
     ClientConfigBuilder()
-    .username(os.getenv("NACOS_USERNAME"))
-    .password(os.getenv("NACOS_PASSWORD"))
+    .username(os.getenv("NACOS_USERNAME") or "nacos")
+    .password(os.getenv("NACOS_PASSWORD") or "nacos")
     .server_address(os.getenv("NACOS_SERVER_ADDR", "localhost:8848"))
     .log_level("INFO")
     .namespace_id(os.getenv("NACOS_NAMESPACE_ID", "ATRI-crawler"))
@@ -36,4 +27,8 @@ client_config = (
 
 async def get_nacos_config_client():
     """获取Nacos配置客户端"""
-    return await NacosConfigService.create_config_service(client_config)
+    try:
+        return await NacosConfigService.create_config_service(client_config)
+    except Exception as e:
+        logger.warning(f"获取Nacos配置客户端失败: {e}")
+        return None

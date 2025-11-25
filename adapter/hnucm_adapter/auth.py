@@ -24,8 +24,11 @@ async def save_cookies_to_redis(
     """
     try:
         redis_client: Optional[Redis] = await get_redis_client()
-    except Exception as e:
+    except Exception:
         redis_client = None
+        return
+    
+    if redis_client is None:
         return
 
     key: str = f"cookies:{school_name}:{username}"
@@ -179,8 +182,11 @@ async def get_cookies_from_redis(
     """
     try:
         redis_client: Optional[Redis] = await get_redis_client()
-    except Exception as e:
+    except Exception:
         redis_client = None
+        return Cookies()
+    
+    if redis_client is None:
         return Cookies()
 
     try:

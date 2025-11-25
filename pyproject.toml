@@ -29,6 +29,8 @@ lxml = "*"
 xlrd = "*"
 dotenv = "*"
 nacos-sdk-python = "*"
+aiokafka = "*"
+
 
 [project.optional-dependencies]
 test = [
@@ -53,10 +55,10 @@ target-version = ["py39", "py310", "py311"]
 include = "\\.pyi?$"
 exclude = '''
 /(\\.
-  |build
-  |dist
-  |nacos_cache
-  |venv
+    |build
+    |dist
+    |nacos_cache
+    |venv
 )/
 '''
 

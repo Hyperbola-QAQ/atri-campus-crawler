@@ -642,4 +642,5 @@ class TestHNUCMAdapter:
         )
 
         logger.debug(schedules)
+        assert schedules is not None, "课程表解析结果为 None"
         assert len(schedules) > 0

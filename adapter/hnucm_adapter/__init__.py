@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Optional, List, Tuple
 from httpx import Cookies
 from adapter.base_adapter import JWAdapter
 from schemas.grade_schema import GradeItem
@@ -68,7 +68,7 @@ class HNUCMAdapter(JWAdapter):
 
     async def get_profile(
         self, cookies: Cookies, username: str
-    ) -> Tuple[bool, str, Profile]:
+    ) -> Tuple[bool, str, Optional[Profile]]:
         """
         获取用户个人信息
 
@@ -80,7 +80,7 @@ class HNUCMAdapter(JWAdapter):
             Tuple[bool, str, Profile]: 获取结果、消息和用户信息模型
         """
         try:
-            logger.info(f"[{username}] 开始获取用户个人信息")
+            logger.debug(f"[{username}] 开始获取用户个人信息")
             profile_crawler = ProfileCrawler(
                 base_url=self.base_url,
                 headers=self.headers,
@@ -92,11 +92,11 @@ class HNUCMAdapter(JWAdapter):
             return True, "Success", profile
         except Exception as e:
             logger.error(f"[{username}] 获取用户个人信息失败: {str(e)}")
-            return False, str(e), {}
+            return False, str(e), None
 
     async def get_grades(
         self, cookies: Cookies, username: str, semester: str = ""
-    ) -> Tuple[bool, str, List[GradeItem]]:
+    ) -> Tuple[bool, str, Optional[List[GradeItem]]]:
         """
         获取成绩信息
 
@@ -124,11 +124,11 @@ class HNUCMAdapter(JWAdapter):
             return True, "Success", grades
         except Exception as e:
             logger.error(f"[{username}] 获取成绩信息失败: {str(e)}")
-            return False, str(e), []
+            return False, str(e), None
 
     async def get_course_schedule(
         self, cookies: Cookies, username: str, semester: str = ""
-    ) -> Tuple[bool, str, List[Dict]]:
+    ) -> Tuple[bool, str, Optional[List[CourseScheduleItem]]]:
         """
         获取课表信息
 
@@ -159,4 +159,4 @@ class HNUCMAdapter(JWAdapter):
             return True, "Success", schedules
         except Exception as e:
             logger.error(f"[{username}] 获取课表信息失败: {str(e)}")
-            return False, str(e), []
+            return False, str(e), None
