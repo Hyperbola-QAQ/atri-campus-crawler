@@ -4,12 +4,9 @@ from pathlib import Path
 from adapter.hnucm_adapter import HNUCMAdapter
 from adapter.hnucm_adapter.profile import ProfileCrawler
 from utils.log import logger
-import dotenv
 import os
 
 SCRIPT_DIR = Path(__file__).parent
-PROJECT_DIR = SCRIPT_DIR.parent
-dotenv.load_dotenv(PROJECT_DIR / ".env.test")
 
 
 class TestHNUCMAdapter:
@@ -21,6 +18,7 @@ class TestHNUCMAdapter:
         return HNUCMAdapter()
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_fetch_profile_xls(self, adapter: HNUCMAdapter) -> None:
         success, message, cookies = await adapter.login(self.username, self.password)
         if not success:
@@ -60,6 +58,7 @@ class TestHNUCMAdapter:
         assert profile["gender"] == "男", "性别解析错误"
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_profile_crawler(self, adapter: HNUCMAdapter) -> None:
 
         _, _, cookies = await adapter.login(self.username, self.password)
@@ -71,6 +70,8 @@ class TestHNUCMAdapter:
         )
 
         logger.debug(profile)
+
+        assert profile is not None
 
         # 断言
         assert profile.gender == "男", "性别解析错误"

@@ -56,8 +56,7 @@ class ProfileCrawler:
             # 读取 Excel 文件 第1份sheet
             # 第2行第1列是院系 第3列是专业 第6列是班级
             # 第3行第2列是姓名 第4列是性别
-            async with aiofiles.open(xls_path, "rb") as f:
-                content = await f.read()
+            content = xls_path.read_bytes()
             workbook = xlrd.open_workbook(file_contents=content)
             sheet = workbook.sheet_by_index(0)
             rows = [sheet.row_values(r) for r in range(sheet.nrows)]

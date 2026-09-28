@@ -11,12 +11,9 @@ from adapter.hnucm_adapter.course_schedule import (
     parse_cell_content,
 )
 from utils.log import logger
-import dotenv
 import os
 
 SCRIPT_DIR = Path(__file__).parent
-PROJECT_DIR = SCRIPT_DIR.parent
-dotenv.load_dotenv(PROJECT_DIR / ".env.test")
 
 
 @pytest.mark.asyncio
@@ -136,9 +133,6 @@ async def test_parse_cell_content() -> None:
 
 
 class TestHNUCMAdapter:
-
-    # 从 .env.test 文件中读取测试用的用户名和密码
-
     username: str = os.getenv("HNUCM_ADAPTER_TEST_USERNAME") or ""
     password: str = os.getenv("HNUCM_ADAPTER_TEST_PASSWORD") or ""
 
@@ -147,6 +141,7 @@ class TestHNUCMAdapter:
         return HNUCMAdapter()
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_fetch_course_schedule_xls(self, adapter: HNUCMAdapter) -> None:
         success, message, cookies = await adapter.login(self.username, self.password)
         if not success:
@@ -629,6 +624,7 @@ class TestHNUCMAdapter:
         ]
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_course_schedule_crawler(self, adapter: HNUCMAdapter) -> None:
 
         _, message, cookies = await adapter.login(self.username, self.password)

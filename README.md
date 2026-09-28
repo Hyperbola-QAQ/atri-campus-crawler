@@ -1,156 +1,134 @@
-以下是对你提供的 Markdown 文档的 **规范化、语法修正与排版优化**，使其更专业、清晰、符合技术文档标准：
+# ATRI Crawler
 
----
+ATRI Crawler 通过 FastAPI 提供教务查询和寝室剩余电费查询接口。
 
-# ATRI-Crawler
+## 环境准备
 
-本微服务是上代产品后端中「爬虫模块」的重构版，核心目标：**更快、更稳、更易维护**。
+项目使用 `uv` 管理依赖。先安装 [uv](https://docs.astral.sh/uv/)，然后在仓库目录执行：
 
-## 主要优化
-
-1. **高性能解析**  
-   使用 `lxml` 替代 `BeautifulSoup (bs4)`，显著提升 HTML/XML 解析效率。
-
-2. **彻底解耦**  
-   将**解析**、**存储**、**调度**三大职责完全拆分，各模块可独立升级或替换。
-
-3. **高内聚设计**  
-   每个子模块职责单一，接口清晰，杜绝“上帝类”。
-
-4. **协程并发**  
-   基于 `asyncio` 实现高并发请求处理，资源利用率更高。
-
-5. **完备日志体系**  
-   结构化日志 + 多级日志控制，便于问题追踪与监控。
-
-6. **高覆盖率单元测试**  
-   - 测试覆盖率 ≥ 90%  
-   - CI/CD 流水线每次提交自动运行测试，保障重构安全。
-
----
-
-## 快速开始
-
-### 1. 安装依赖
 ```bash
-pip install -r requirements.txt
+uv sync --group dev
+cp .env.example .env
+cp -n config/electricity_accounts.example.json config/electricity_accounts.json
 ```
 
-### 2. 启动服务
-```bash
-python main.py
-```
+编辑 `.env`，将 `ELECTRICITY_BASE_URL` 设置为校园支付平台根地址（不含 `/xysf`）。
+例如登录页为 `http://cw-zfpt.hnucm.edu.cn/xysf/login.aspx?local=zh-cn&lx=` 时，
+应填写 `ELECTRICITY_BASE_URL=http://cw-zfpt.hnucm.edu.cn`。修改配置后需重启 API 服务。
+教务登录所用的 Redis 可通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_DB`、
+`REDIS_PASSWORD`、`REDIS_SSL` 等环境变量配置，默认连接本机 6379 端口。
 
----
-
-## API 调用说明
-
-服务通过 **Kafka 消息队列** 异步通信：
-
-- **请求主题**：`atri-crawler-input`  
-- **响应主题**：`atri-crawler-output`
-
-### 请求格式（JSON）
+账号列表默认读取 `config/electricity_accounts.json`，格式如下：
 
 ```json
 {
-    "request_id": "唯一请求ID",
-    "school": "HNUCM",
-    "action": "login|get_profile|get_grades|get_course_schedule",
-    "username": "学号",
-    "password": "密码",
-    "params": {
-        "semester": "2023-2024-1"
-    }
+  "accounts": [
+    {"xh": "学号", "pwd": "密码"}
+  ]
 }
 ```
 
-> **说明**：
-> - `request_id`：用于关联请求与响应，必须全局唯一。
-> - `params.semester`：仅在 `get_grades` 和 `get_course_schedule` 动作中可选。
+示例文件中的 `123:123` 和 `1234:1234` 是占位账号，不是可用的校园账号。
+正式运行前请在本地账号文件中改为已授权的账号，并限制文件访问权限。该文件已被 Git 忽略。也可通过
+`ELECTRICITY_ACCOUNTS_FILE` 指向其他 JSON 文件。账号数据不会写入 API 响应或应用日志。
 
----
-
-## 目录结构
-
-```
-atri_crawler/
-├── adapter/               # 学校适配器（各学校教务系统实现）
-│   └── hnucm_adapter/     # 湖南中医药大学（HNUCM）具体实现
-├── schemas/               # Pydantic 数据模型定义
-├── utils/                 # 工具模块（日志、OCR、Redis、Nacos 等）
-├── tests/                 # 单元测试与集成测试
-├── main.py                # 服务主入口
-└── pyproject.toml         # 项目构建与依赖配置
-```
-
----
-
-## 配置说明
-
-所有配置支持 **Nacos 配置中心** 管理，也可通过 **环境变量** 覆盖。
-
-### 基础环境变量
-
-| 变量名 | 说明 | 示例值 |
-|--------|------|--------|
-| `ENVIRONMENT` | 运行环境 | `dev` / `test` / `prod` |
-| `NACOS_SERVER_ADDR` | Nacos 服务地址 | `127.0.0.1:8848` |
-| `NACOS_NAMESPACE_ID` | Nacos 命名空间 ID | `atri-crawler` |
-| `NACOS_USERNAME` | Nacos 用户名 | `nacos` |
-| `NACOS_PASSWORD` | Nacos 密码 | `nacos` |
-| `NACOS_CACHE_DIR` | 本地配置缓存目录 | `./nacos_cache` |
-
-> 💡 推荐做法：将敏感信息（如密码）通过 Nacos 或 Secret Manager 管理，避免硬编码。
-
----
-
-## 运行测试
+## 启动
 
 ```bash
-# 全量测试（静默模式）
-pytest -q
-
-# 指定测试文件（详细输出）
-pytest tests/test_adapter_login.py -v
+uv run python main.py
 ```
 
-确保提交前通过所有测试：
+服务默认监听 `0.0.0.0:8000`。可通过 `API_HOST`、`API_PORT` 调整；交互式文档位于
+`/docs`，`/health` 用于健康检查。
+
+Kubernetes 部署与更新见 [部署说明](deploy/k8s/README.md)。
+
+## API
+
+### 查询寝室剩余电费
+
+```http
+GET /api/electricity/<ROOMID>
+```
+
+调用方只需提供寝室号；服务会从内部账号池选择账号登录校园支付平台。
+
+参数支持 4–5 位纯数字，或 `6-417`、`06-417` 这类 `x-xxx` / `xx-xxx` 格式。
+四位数字或移除连字符后为四位的输入，会自动补一个前导 `0`，再作为平台的
+`roomid` 字段查询。
+成功响应示例：
+
+```json
+{
+  "room_number": "平台返回的 ROOMID",
+  "name": "6号公寓417房",
+  "meter_number": "电表编号",
+  "remaining_electricity": "193.17kWh",
+  "balance": 119.57,
+  "state": "在线",
+  "category": "ElecRoomYun"
+}
+```
+
+账号池按轮转顺序尝试账号。已登录 Cookie 和 CSRF 令牌仅缓存在当前进程内，默认
+30 分钟过期；服务重启后缓存会清空。代码中留有 TODO，后续可分别改用 SQLite
+保存账号池、Valkey 共享会话缓存。
+
+### 教务查询
+
+`POST /api/crawl` 保留教务查询能力。请求示例：
+
+```json
+{
+  "school": "HNUCM",
+  "action": "get_grades",
+  "username": "学号",
+  "password": "密码",
+  "params": {"semester": "2023-2024-1"}
+}
+```
+
+支持 `login`、`get_profile`、`get_grades` 和 `get_course_schedule` 四种操作。
+
+## 开发工具与测试
+
+开发依赖包含 `pytest`、`ruff` 和 `ty`。可用下列命令运行测试和静态检查：
+
 ```bash
-make test
+uv run pytest -q
+uv run ruff check .
+uv run ruff format .
+uv run ty check
 ```
 
----
+默认测试使用本地 mock，不访问校园服务或 Redis。真实 HNUCM 集成测试默认跳过，
+需明确启用并从环境变量提供测试账号：
 
-## 支持的学校
+```bash
+RUN_HNUCM_INTEGRATION_TESTS=1 \
+HNUCM_ADAPTER_TEST_USERNAME=... \
+HNUCM_ADAPTER_TEST_PASSWORD=... \
+uv run pytest -m integration -v
+```
 
-- ✅ 湖南中医药大学（`HNUCM`）
-- ➕ 更多学校适配中……
+寝室电费的真实 HTTP 接口测试会请求已启动的本地 API，并由 API 使用已配置的账号
+访问校园电费平台。先在 `.env` 中配置 `ELECTRICITY_BASE_URL`，在
+`config/electricity_accounts.json` 中配置可用账号，然后在一个终端启动服务：
 
----
+```bash
+uv run python main.py
+```
 
-## 贡献指南
+在另一个终端运行（将 `ROOMID` 替换为平台实际返回的寝室标识）：
 
-1. Fork 本仓库
-2. 创建特性分支：  
-   ```bash
-   git checkout -b feat/add-new-school
-   ```
-3. 提交代码前确保：  
-   - 代码风格统一（使用 `ruff` / `black`）  
-   - 单元测试通过（`make test`）
-4. 发起 Pull Request  
-   - CI 流水线全绿即可合并
+```bash
+RUN_ELECTRICITY_LIVE_TESTS=1 \
+ELECTRICITY_API_TEST_BASE_URL=http://127.0.0.1:8000 \
+ELECTRICITY_TEST_ROOM_NUMBER=your_room_id \
+uv run pytest tests/test_electricity_live_api.py -v
+```
 
----
+这个测试会验证 HTTP 200、返回的寝室号和非空剩余电费。普通测试运行时会跳过它。
 
-## 许可证
-
-本项目采用 [MIT License](LICENSE) ——  
-✅ 允许商用  
-✅ 允许修改  
-✅ 请保留原始版权声明
-
---- 
-
-> 🌟 欢迎贡献！任何 issue、PR 或建议都备受感激。
+编辑器可将 `ty server` 配置为 Python 语言服务器；项目 Python 版本在 `pyproject.toml`
+中声明为 3.10 及以上。

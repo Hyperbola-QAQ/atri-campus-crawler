@@ -1,14 +1,8 @@
 import pytest
 import pytest_asyncio
 from httpx import Cookies
-from pathlib import Path
 from adapter.hnucm_adapter import HNUCMAdapter
-import dotenv
 import os
-
-SCRIPT_DIR = Path(__file__).parent
-PROJECT_DIR = SCRIPT_DIR.parent
-dotenv.load_dotenv(PROJECT_DIR / ".env.test")
 
 
 class TestHNUCMAdapter:
@@ -21,6 +15,7 @@ class TestHNUCMAdapter:
         return HNUCMAdapter()
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_login_success(self, adapter: HNUCMAdapter):
         # 使用真实的登录请求
         success, message, cookies = await adapter.login(self.username, self.password)
@@ -33,6 +28,7 @@ class TestHNUCMAdapter:
         assert has_jsessionid is True
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_login_failure(self, adapter: HNUCMAdapter):
         # 测试登录失败情况
         success, message, cookies = await adapter.login("wrong_user", "wrong_password")

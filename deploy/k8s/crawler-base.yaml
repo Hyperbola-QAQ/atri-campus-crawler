@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: university-crawler
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: university-crawler-nfs-retain
+provisioner: cluster.local/nfs-subdir-external-provisioner
+parameters:
+  archiveOnDelete: "true"
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crawler-state
+  namespace: university-crawler
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: university-crawler-nfs-retain
+  resources:
+    requests:
+      storage: 3Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crawler-runtime
+  namespace: university-crawler
+data:
+  ENVIRONMENT: prod
+  API_HOST: 0.0.0.0
+  API_PORT: "8000"
+  REDIS_HOST: valkey-primary.databases.svc.cluster.local
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_DECODE_RESPONSES: "true"
+  REDIS_SSL: "false"
+  ELECTRICITY_ACCOUNTS_FILE: /run/secrets/electricity/accounts.json
+  UV_PROJECT_ENVIRONMENT: /var/lib/crawler/venv
+  UV_CACHE_DIR: /var/lib/crawler/uv-cache
+  UV_LINK_MODE: copy
+  UV_PYTHON_DOWNLOADS: never
+  PYTHONDONTWRITEBYTECODE: "1"
+  HOME: /var/lib/crawler

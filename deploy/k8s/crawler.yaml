@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawler
+  namespace: university-crawler
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: crawler
+  template:
+    metadata:
+      labels:
+        app: crawler
+      annotations:
+        crawler/release: __CRAWLER_RELEASE__
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: sync-dependencies
+          image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cd "/var/lib/crawler/releases/${RELEASE_ID}"
+              uv sync --locked --no-dev --no-install-project
+          envFrom:
+            - configMapRef:
+                name: crawler-runtime
+          env:
+            - name: RELEASE_ID
+              value: __CRAWLER_RELEASE__
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/crawler
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: crawler
+          image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              cd "/var/lib/crawler/releases/${RELEASE_ID}"
+              exec uv run --locked --no-sync python main.py
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: crawler-runtime
+            - secretRef:
+                name: crawler-runtime-secrets
+            - secretRef:
+                name: crawler-redis-auth
+          env:
+            - name: RELEASE_ID
+              value: __CRAWLER_RELEASE__
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/crawler
+            - name: tmp
+              mountPath: /tmp
+            - name: accounts
+              mountPath: /run/secrets/electricity
+              readOnly: true
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: crawler-state
+        - name: tmp
+          emptyDir:
+            sizeLimit: 512Mi
+        - name: accounts
+          secret:
+            secretName: crawler-electricity-accounts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crawler
+  namespace: university-crawler
+spec:
+  type: ClusterIP
+  selector:
+    app: crawler
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

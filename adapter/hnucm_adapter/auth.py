@@ -192,10 +192,12 @@ async def get_cookies_from_redis(
     try:
         key: str = f"cookies:{school_name}:{username}"
         logger.debug(f"[{username}] 尝试从Redis获取Cookie: {key}")
-        stored_data: Optional[str] = await redis_client.get(key)
+        stored_data = await redis_client.get(key)
         if stored_data is None:
             logger.debug(f"[{username}] Redis中未找到Cookie: {key}")
             return Cookies()
+        if isinstance(stored_data, bytes):
+            stored_data = stored_data.decode("utf-8")
 
         # 解析分号分隔的cookie字符串
         cookies = Cookies()

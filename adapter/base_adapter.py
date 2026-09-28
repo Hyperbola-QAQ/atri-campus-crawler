@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
+from typing import Any, Dict, Tuple
+
 from httpx import Cookies
-import asyncio
 
 headers = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -45,7 +45,7 @@ class JWAdapter(ABC):
     @abstractmethod
     async def get_profile(
         self, cookies: Cookies, username: str
-    ) -> Tuple[bool, str, Dict]:
+    ) -> Tuple[bool, str, Any]:
         """
         获取用户个人信息
 
@@ -61,7 +61,7 @@ class JWAdapter(ABC):
     @abstractmethod
     async def get_grades(
         self, cookies: Cookies, username: str, semester: str = ""
-    ) -> Tuple[bool, str, List[Dict]]:
+    ) -> Tuple[bool, str, Any]:
         """
         获取成绩列表
 
@@ -78,7 +78,7 @@ class JWAdapter(ABC):
     @abstractmethod
     async def get_course_schedule(
         self, cookies: Cookies, username: str, semester: str = ""
-    ) -> Tuple[bool, str, List[Dict]]:
+    ) -> Tuple[bool, str, Any]:
         """
         获取课表列表
 

@@ -1,23 +1,17 @@
 import pytest
 import pytest_asyncio
 from pathlib import Path
-import aiofiles
 from adapter.hnucm_adapter import HNUCMAdapter
 from adapter.hnucm_adapter.grade import GradeCrawler
 from schemas.grade_schema import GradeItem
 from utils.log import logger
-import dotenv
 import os
 
 
 SCRIPT_DIR = Path(__file__).parent
-PROJECT_DIR = SCRIPT_DIR.parent
-dotenv.load_dotenv(PROJECT_DIR / ".env.test")
 
 
 class TestHNUCMAdapter:
-    # 从 .env.test 文件中读取测试用的用户名和密码
-
     username: str = os.getenv("HNUCM_ADAPTER_TEST_USERNAME") or ""
     password: str = os.getenv("HNUCM_ADAPTER_TEST_PASSWORD") or ""
 
@@ -28,10 +22,9 @@ class TestHNUCMAdapter:
     @pytest.mark.asyncio
     async def test_parse_main_grade(self, adapter: HNUCMAdapter) -> None:
         # 读取./fixtures/main_grade.html
-        async with aiofiles.open(
-            SCRIPT_DIR / "fixtures" / "main_grade.html", "r", encoding="utf-8"
-        ) as f:
-            html_content = await f.read()
+        html_content = (SCRIPT_DIR / "fixtures" / "main_grade.html").read_text(
+            encoding="utf-8"
+        )
 
         grade_crawler = GradeCrawler(
             base_url=adapter.base_url,
@@ -324,6 +317,7 @@ class TestHNUCMAdapter:
         assert len(detail_grade) > 0
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_get_grades(self, adapter: HNUCMAdapter) -> None:
         # 使用真实的登录请求
         success, message, cookies = await adapter.login(self.username, self.password)
@@ -342,6 +336,7 @@ class TestHNUCMAdapter:
         assert len(grade_list) > 0, "成绩列表为空"
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_get_all_grades(self, adapter: HNUCMAdapter) -> None:
         # 测试获取所有学期成绩
         success, message, cookies = await adapter.login(self.username, self.password)
@@ -357,6 +352,7 @@ class TestHNUCMAdapter:
         assert len(all_grades) > 0, "所有学期成绩列表为空"
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_get_grades_with_invalid_semester(
         self, adapter: HNUCMAdapter
     ) -> None:
@@ -376,6 +372,7 @@ class TestHNUCMAdapter:
         assert isinstance(grades, list)
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_get_grades_structure(self, adapter: HNUCMAdapter) -> None:
         # 测试成绩数据结构
         success, message, cookies = await adapter.login(self.username, self.password)

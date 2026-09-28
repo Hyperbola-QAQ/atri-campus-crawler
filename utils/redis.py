@@ -1,50 +1,33 @@
-import redis.asyncio as redis
-import json
+"""Redis client configured directly from the process environment."""
+
 import os
-from typing import Optional
-from .nacos import get_nacos_config_client
-from v2.nacos import ConfigParam
+
+import redis.asyncio as redis
 from dotenv import load_dotenv
-from utils.log import logger
 
-load_dotenv(".env")
-load_dotenv(f'.env.{os.getenv("ENVIRONMENT")}')
+load_dotenv()
+load_dotenv(f".env.{os.getenv('ENVIRONMENT', 'dev')}")
 
-_REDIS_CLIENT: Optional[redis.Redis] = None
+_REDIS_CLIENT: redis.Redis | None = None
+
 
 def reset_redis_client_for_tests() -> None:
-    """仅供测试使用：重置全局 Redis 客户端"""
+    """Reset the shared client after a test closes it."""
     global _REDIS_CLIENT
     _REDIS_CLIENT = None
 
+
 async def get_redis_client() -> redis.Redis:
+    """Return a shared Redis client using REDIS_* environment settings."""
     global _REDIS_CLIENT
     if _REDIS_CLIENT is None:
-        config_client = await get_nacos_config_client()
-        if config_client is None:
-            logger.warning("获取nacos配置客户端失败, 使用默认配置")
-            _REDIS_CLIENT = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
-            return _REDIS_CLIENT
-
-        config_param = ConfigParam(data_id="dev.redis.json", group="REDIS")
-        try:
-            config_str = await config_client.get_config(config_param)
-            if config_str:
-                config: dict = json.loads(config_str)
-                _REDIS_CLIENT = redis.Redis(
-                    host=config.get("host", "localhost"),
-                    port=config.get("port", 6379),
-                    db=config.get("db", 0),
-                    decode_responses=config.get("decode_responses", True),
-                    password=config.get("password"),
-                    ssl=config.get("ssl", False),
-                )
-                await _REDIS_CLIENT.ping()
-                return _REDIS_CLIENT
-        except Exception as e:
-            logger.warning(f"获取Redis配置失败: {e}, 使用默认配置")
-
-        # fallback
-        _REDIS_CLIENT = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
-    
+        _REDIS_CLIENT = redis.Redis(
+            host=os.getenv("REDIS_HOST", "localhost"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            db=int(os.getenv("REDIS_DB", "0")),
+            password=os.getenv("REDIS_PASSWORD") or None,
+            decode_responses=os.getenv("REDIS_DECODE_RESPONSES", "true").lower()
+            in {"1", "true", "yes"},
+            ssl=os.getenv("REDIS_SSL", "false").lower() in {"1", "true", "yes"},
+        )
     return _REDIS_CLIENT

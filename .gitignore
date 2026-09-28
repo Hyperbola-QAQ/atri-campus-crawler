@@ -1,6 +1,7 @@
 # pycache
 __pycache__/
-nacos_cache/
+*.egg-info/
+:memory:.ses
 
 # .vscode
 .vscode/
@@ -22,3 +23,6 @@ logs/
 .env
 .env.*
 !/.env.example
+
+# Local account pool credentials
+/config/electricity_accounts.json
