@@ -29,5 +29,9 @@ async def get_redis_client() -> redis.Redis:
             decode_responses=os.getenv("REDIS_DECODE_RESPONSES", "true").lower()
             in {"1", "true", "yes"},
             ssl=os.getenv("REDIS_SSL", "false").lower() in {"1", "true", "yes"},
+            socket_connect_timeout=float(
+                os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "1")
+            ),
+            socket_timeout=float(os.getenv("REDIS_SOCKET_TIMEOUT", "1")),
         )
     return _REDIS_CLIENT

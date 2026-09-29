@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: university-crawler-ingress
+  namespace: atri-university-crawler
+spec:
+  podSelector:
+    matchLabels:
+      app: university-crawler
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: atri-server
+      ports:
+        - protocol: TCP
+          port: 8000
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: higress-system
+      ports:
+        - protocol: TCP
+          port: 8000

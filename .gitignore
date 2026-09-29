@@ -26,3 +26,6 @@ logs/
 
 # Local account pool credentials
 /config/electricity_accounts.json
+/config/academic_accounts.json
+/config/electricity_rooms.json
+/config/electricity_collection_state.json

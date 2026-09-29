@@ -21,6 +21,8 @@ async def test_get_redis_client_uses_environment(monkeypatch):
     monkeypatch.setenv("REDIS_PASSWORD", "test-secret")
     monkeypatch.setenv("REDIS_DECODE_RESPONSES", "false")
     monkeypatch.setenv("REDIS_SSL", "true")
+    monkeypatch.setenv("REDIS_SOCKET_CONNECT_TIMEOUT", "2.5")
+    monkeypatch.setenv("REDIS_SOCKET_TIMEOUT", "3.5")
     monkeypatch.setattr(redis_module.redis, "Redis", fake_client)
     reset_redis_client_for_tests()
 
@@ -34,6 +36,8 @@ async def test_get_redis_client_uses_environment(monkeypatch):
             "password": "test-secret",
             "decode_responses": False,
             "ssl": True,
+            "socket_connect_timeout": 2.5,
+            "socket_timeout": 3.5,
         }
     finally:
         reset_redis_client_for_tests()

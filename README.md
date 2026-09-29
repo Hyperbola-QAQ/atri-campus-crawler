@@ -10,13 +10,13 @@ ATRI Crawler 通过 FastAPI 提供教务查询和寝室剩余电费查询接口�
 uv sync --group dev
 cp .env.example .env
 cp -n config/electricity_accounts.example.json config/electricity_accounts.json
+cp -n config/academic_accounts.example.json config/academic_accounts.json
 ```
 
-编辑 `.env`，将 `ELECTRICITY_BASE_URL` 设置为校园支付平台根地址（不含 `/xysf`）。
-例如登录页为 `http://cw-zfpt.hnucm.edu.cn/xysf/login.aspx?local=zh-cn&lx=` 时，
-应填写 `ELECTRICITY_BASE_URL=http://cw-zfpt.hnucm.edu.cn`。修改配置后需重启 API 服务。
 教务登录所用的 Redis 可通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_DB`、
-`REDIS_PASSWORD`、`REDIS_SSL` 等环境变量配置，默认连接本机 6379 端口。
+`REDIS_PASSWORD`、`REDIS_SSL` 等环境变量配置，默认连接本机 6379 端口。电费
+结果复用同一 Redis 配置；Redis 客户端可直接连接兼容 Redis 协议的 Valkey 服务。
+连接和读写超时可用 `REDIS_SOCKET_CONNECT_TIMEOUT`、`REDIS_SOCKET_TIMEOUT` 设置。
 
 账号列表默认读取 `config/electricity_accounts.json`，格式如下：
 
@@ -31,6 +31,9 @@ cp -n config/electricity_accounts.example.json config/electricity_accounts.json
 示例文件中的 `123:123` 和 `1234:1234` 是占位账号，不是可用的校园账号。
 正式运行前请在本地账号文件中改为已授权的账号，并限制文件访问权限。该文件已被 Git 忽略。也可通过
 `ELECTRICITY_ACCOUNTS_FILE` 指向其他 JSON 文件。账号数据不会写入 API 响应或应用日志。
+
+教务系统使用完全独立的 `config/academic_accounts.json`；请不要将电费平台账号
+复制到此文件。可通过 `ACADEMIC_ACCOUNTS_FILE` 指向其他 JSON 文件。
 
 ## 启动
 
@@ -48,10 +51,13 @@ Kubernetes 部署与更新见 [部署说明](deploy/k8s/README.md)。
 ### 查询寝室剩余电费
 
 ```http
-GET /api/electricity/<ROOMID>
+GET /api/v1/electricity/hanpu/<ROOMID>
 ```
 
-调用方只需提供寝室号；服务会从内部账号池选择账号登录校园支付平台。
+调用方需指定校区和寝室号。校区使用目录接口返回的 `campus` 值；保留 `hanpu` 作为含浦校区的兼容别名。后台采集服务会从内部账号池选择账号登录校园支付平台，且只在该校区的区域中查询，避免同号楼栋误命中。
+
+该接口只读取当天已采集的缓存，不会因调用而请求校园财务平台。目录中不存在
+该校区/寝室时返回 `404`；目录存在但尚未轮到当天采集时返回 `503`。
 
 参数支持 4–5 位纯数字，或 `6-417`、`06-417` 这类 `x-xxx` / `xx-xxx` 格式。
 四位数字或移除连字符后为四位的输入，会自动补一个前导 `0`，再作为平台的
@@ -60,6 +66,7 @@ GET /api/electricity/<ROOMID>
 
 ```json
 {
+  "campus": "hanpu",
   "room_number": "平台返回的 ROOMID",
   "name": "6号公寓417房",
   "meter_number": "电表编号",
@@ -71,12 +78,60 @@ GET /api/electricity/<ROOMID>
 ```
 
 账号池按轮转顺序尝试账号。已登录 Cookie 和 CSRF 令牌仅缓存在当前进程内，默认
-30 分钟过期；服务重启后缓存会清空。代码中留有 TODO，后续可分别改用 SQLite
-保存账号池、Valkey 共享会话缓存。
+30 分钟过期；服务重启后缓存会清空。
+
+电费平台的读数每天才刷新，因此同一校区、寝室当天的成功查询会被缓存至下一次
+本地零点（默认 `Asia/Shanghai`，可由 `ELECTRICITY_CACHE_TIMEZONE` 修改）。缓存
+优先写入 Redis，键前缀可通过 `ELECTRICITY_CACHE_KEY_PREFIX` 配置。若 Redis
+连接、读取或写入失败，服务会立即改用当前进程内存缓存，不会因此使电费接口失败；
+它会在 `REDIS_RETRY_INTERVAL_SECONDS`（默认 30 秒）后再尝试连接 Redis。进程
+内存缓存不在多副本之间共享，并会在服务重启后清空。
+
+### 获取全部有效寝室
+
+服务启动时会自动登录一次电费平台，遍历所有可见校区、楼栋、楼层和房间，并将
+不含账号、密码、Cookie 或电表读数的目录写入 `ELECTRICITY_ROOM_CATALOG_FILE`。
+目录可从下面的接口读取；其中每条记录的 `campus` 可直接用于电费查询接口。
+
+```http
+GET /api/v1/electricity/rooms
+```
+
+手动刷新目录（需要内部令牌）：
+
+```http
+POST /api/v1/electricity/rooms/refresh
+Authorization: Bearer <CRAWLER_INTERNAL_TOKEN>
+```
+
+服务进程会在每周一 11:30（`Asia/Shanghai`）刷新一次目录；每天 07:30 开始按
+每批 2 间、批次间隔 1 秒（120 间/分钟），收集全量寝室的当天电费读数。
+
+也可以手动刷新：
+
+```bash
+uv run python scripts/sync_electricity_rooms.py
+```
+
+### 管理电费账号池
+
+账号池可通过以下接口管理。出于安全考虑，所有响应只返回账号 `xh`，绝不返回
+密码 `pwd`。这些接口可以修改电费查询所用凭据；部署时应只在受信任的内网或管理
+网关后开放。
+
+| 操作 | 接口 | 请求体 |
+| --- | --- | --- |
+| 查询全部账号 | `GET /api/v1/electricity/accounts` | 无 |
+| 新增账号 | `POST /api/v1/electricity/accounts` | `{"xh":"学号","pwd":"密码"}` |
+| 修改账号或密码 | `PUT /api/v1/electricity/accounts/{xh}` | `{"xh":"新学号","pwd":"新密码"}`，两个字段至少提供一个 |
+| 删除账号 | `DELETE /api/v1/electricity/accounts/{xh}` | 无 |
+
+新增成功返回 `201`，删除成功返回 `204`；账号不存在返回 `404`，账号重复返回
+`409`。写入采用替换式保存，读取中的电费查询不会读到半截 JSON 文件。
 
 ### 教务查询
 
-`POST /api/crawl` 保留教务查询能力。请求示例：
+`POST /api/v1/academic` 提供同步教务查询能力。请求示例：
 
 ```json
 {
@@ -89,6 +144,23 @@ GET /api/electricity/<ROOMID>
 ```
 
 支持 `login`、`get_profile`、`get_grades` 和 `get_course_schedule` 四种操作。
+
+`username` 与 `password` 现在可以同时省略。省略时，服务会从教务账号池按轮转
+顺序挑选账号登录，因此调用方无需提交账号。只提供其中一个字段会返回 `422`。
+
+### 管理教务账号池
+
+教务账号池和电费账号池使用不同文件、不同接口：
+
+| 操作 | 接口 | 请求体 |
+| --- | --- | --- |
+| 查询全部账号 | `GET /api/v1/academic/accounts` | 无 |
+| 新增账号 | `POST /api/v1/academic/accounts` | `{"xh":"学号","pwd":"密码"}` |
+| 修改账号或密码 | `PUT /api/v1/academic/accounts/{xh}` | `{"xh":"新学号","pwd":"新密码"}`，至少提供一个字段 |
+| 删除账号 | `DELETE /api/v1/academic/accounts/{xh}` | 无 |
+
+同样地，响应绝不包含密码；新增、更新、删除分别返回 `201`、`200`、`204`。教务
+账号池可影响不带账号的教务查询结果，管理接口应只向可信内网或管理网关开放。
 
 ## 开发工具与测试
 
@@ -112,8 +184,8 @@ uv run pytest -m integration -v
 ```
 
 寝室电费的真实 HTTP 接口测试会请求已启动的本地 API，并由 API 使用已配置的账号
-访问校园电费平台。先在 `.env` 中配置 `ELECTRICITY_BASE_URL`，在
-`config/electricity_accounts.json` 中配置可用账号，然后在一个终端启动服务：
+访问校园电费平台。在 `config/electricity_accounts.json` 中配置可用账号，然后在一个
+终端启动服务：
 
 ```bash
 uv run python main.py

@@ -1,7 +1,9 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: university-crawler
+  name: atri-university-crawler
+  labels:
+    monitoring-gateway-access: "true"
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -18,7 +20,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: crawler-state
-  namespace: university-crawler
+  namespace: atri-university-crawler
 spec:
   accessModes:
     - ReadWriteMany
@@ -31,7 +33,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: crawler-runtime
-  namespace: university-crawler
+  namespace: atri-university-crawler
 data:
   ENVIRONMENT: prod
   API_HOST: 0.0.0.0
@@ -41,7 +43,15 @@ data:
   REDIS_DB: "0"
   REDIS_DECODE_RESPONSES: "true"
   REDIS_SSL: "false"
+  REDIS_SOCKET_CONNECT_TIMEOUT: "1"
+  REDIS_SOCKET_TIMEOUT: "1"
+  REDIS_RETRY_INTERVAL_SECONDS: "30"
+  ELECTRICITY_CACHE_KEY_PREFIX: electricity:daily
+  ELECTRICITY_CACHE_TIMEZONE: Asia/Shanghai
   ELECTRICITY_ACCOUNTS_FILE: /run/secrets/electricity/accounts.json
+  ELECTRICITY_ROOM_CATALOG_FILE: /var/lib/crawler/electricity_rooms.json
+  ELECTRICITY_COLLECTION_STATE_FILE: /var/lib/crawler/electricity_collection_state.json
+  ELECTRICITY_SCHEDULE_TIMEZONE: Asia/Shanghai
   UV_PROJECT_ENVIRONMENT: /var/lib/crawler/venv
   UV_CACHE_DIR: /var/lib/crawler/uv-cache
   UV_LINK_MODE: copy

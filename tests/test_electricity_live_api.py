@@ -1,29 +1,31 @@
-"""End-to-end HTTP test against a running API and the real electricity portal."""
+"""Opt-in integration test against the real electricity platform."""
 
-import os
-import re
-
-import httpx
 import pytest
+
+from services.electricity import ElectricityService
 
 
 @pytest.mark.electricity_live
 @pytest.mark.asyncio
 async def test_electricity_api_returns_live_meter_reading():
-    base_url = os.getenv("ELECTRICITY_API_TEST_BASE_URL", "").strip()
-    room_number = os.getenv("ELECTRICITY_TEST_ROOM_NUMBER", "").strip()
-    if not base_url:
-        pytest.fail("set ELECTRICITY_API_TEST_BASE_URL to the running API URL")
-    if not re.fullmatch(r"\d{4,5}", room_number):
-        pytest.fail("set ELECTRICITY_TEST_ROOM_NUMBER to a 4-5 digit platform ROOMID")
+    service = ElectricityService.from_environment()
+    catalog = service.get_room_catalog()
+    if catalog is None:
+        pytest.fail("run scripts/sync_electricity_rooms.py before the live test")
+    room = next(
+        (
+            item
+            for item in catalog["rooms"]
+            if isinstance(item.get("campus"), str)
+            and isinstance(item.get("room_number"), str)
+        ),
+        None,
+    )
+    if room is None:
+        pytest.fail("the room catalog has no queryable dorm room")
 
-    async with httpx.AsyncClient(
-        base_url=base_url, timeout=90.0, trust_env=False
-    ) as client:
-        response = await client.get(f"/api/electricity/{room_number}")
-
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data["room_number"] == room_number.zfill(5)
+    data = await service.query(room["room_number"], room["campus"])
+    assert data["room_number"] == room["room_number"]
+    assert data["campus"] == room["campus"]
     assert isinstance(data["remaining_electricity"], str)
     assert data["remaining_electricity"].strip()

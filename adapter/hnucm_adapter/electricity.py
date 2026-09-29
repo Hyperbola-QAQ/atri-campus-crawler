@@ -86,6 +86,7 @@ def _response_json(response: httpx.Response) -> Any:
 class HNUCMElectricityClient:
     """Logs in to the cashier portal and retrieves one dorm meter reading."""
 
+    DEFAULT_BASE_URL = "http://cw-zfpt.hnucm.edu.cn"
     csrf_path = "/xysf/api/Token/Csrf"
     login_page_path = "/xysf/login.aspx?local=zh-cn&lx="
     login_api_path = "/xysf/api/User/App/Login"
@@ -94,7 +95,7 @@ class HNUCMElectricityClient:
 
     def __init__(
         self,
-        base_url: str,
+        base_url: str = DEFAULT_BASE_URL,
         timeout: float = 20,
         client_factory: Any = httpx.AsyncClient,
     ):
@@ -105,6 +106,7 @@ class HNUCMElectricityClient:
     async def query(
         self,
         room_number: str,
+        campus: str,
         username: str,
         password: str,
         session: PortalSession | None = None,
@@ -133,9 +135,116 @@ class HNUCMElectricityClient:
                 await self._login(client, csrf_token, public_key, username, password)
             else:
                 csrf_token = session.csrf_token
-            result = await self._get_electricity(client, csrf_token, room_number)
+            result = await self._get_electricity(
+                client, csrf_token, room_number, campus
+            )
             cookies = {cookie.name: cookie.value for cookie in client.cookies.jar}
             return result, PortalSession(cookies=cookies, csrf_token=csrf_token)
+
+    async def discover_rooms(
+        self,
+        username: str,
+        password: str,
+        session: PortalSession | None = None,
+    ) -> tuple[list[dict[str, str]], PortalSession]:
+        """Return every selectable dorm room from every area visible to an account.
+
+        The payment site exposes its inventory as a four-level selector rather
+        than a single room-list endpoint.  Keep the area's opaque ``value`` as
+        the campus identifier: it is stable for the lifetime of a portal
+        record and, unlike a hand-maintained mapping, also covers new campuses.
+        """
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64; rv:141.0) Gecko/20100101 Firefox/141.0"
+            ),
+        }
+        async with self.client_factory(
+            base_url=self.base_url,
+            follow_redirects=True,
+            timeout=self.timeout,
+            headers=headers,
+            cookies=session.cookies if session is not None else None,
+            trust_env=False,
+        ) as client:
+            if session is None:
+                csrf_token = await self._get_csrf_token(client)
+                public_key = await self._get_login_parameters(client)
+                await self._login(client, csrf_token, public_key, username, password)
+            else:
+                csrf_token = session.csrf_token
+
+            rooms = await self._discover_room_options(client, csrf_token)
+            cookies = {cookie.name: cookie.value for cookie in client.cookies.jar}
+            return rooms, PortalSession(cookies=cookies, csrf_token=csrf_token)
+
+    async def _discover_room_options(
+        self, client: httpx.AsyncClient, csrf_token: str
+    ) -> list[dict[str, str]]:
+        base_selection = {
+            "areaid": "-1", "buildid": "-1", "roomid": "-1", "levelid": "-1",
+            "IsLxr": False, "IsDefault": False, "IsFirst": False, "Cxid": "",
+        }
+        discovered: list[dict[str, str]] = []
+        for area in await self._get_room_options(client, csrf_token, "area", base_selection):
+            area_id, area_name = area.get("value"), area.get("label")
+            if not isinstance(area_id, str) or not isinstance(area_name, str):
+                continue
+            if "宿舍" not in area_name or "商户" in area_name:
+                # A payment account can also see merchant areas.  Their room
+                # selectors are valid portal data, but they are not dormitory
+                # rooms and must not enter the electricity collection queue.
+                continue
+            area_selection = {**base_selection, "areaid": area_id}
+            buildings = await self._get_room_options(
+                client, csrf_token, "build", area_selection
+            )
+            for building in buildings:
+                building_id, building_name = building.get("value"), building.get("label")
+                if not isinstance(building_id, str) or not isinstance(building_name, str):
+                    continue
+                building_selection = {**area_selection, "buildid": building_id}
+                levels = await self._get_room_options(
+                    client, csrf_token, "level", building_selection
+                )
+                for level in levels:
+                    level_id, level_name = level.get("value"), level.get("label")
+                    if not isinstance(level_id, str) or not isinstance(level_name, str):
+                        continue
+                    level_selection = {**building_selection, "levelid": level_id}
+                    rooms = await self._get_room_options(
+                        client, csrf_token, "room", level_selection
+                    )
+                    for room in rooms:
+                        room_id, room_name = room.get("value"), room.get("label")
+                        if not isinstance(room_id, str) or not isinstance(room_name, str):
+                            continue
+                        record = {
+                            "campus": area_id,
+                            "campus_name": area_name,
+                            "building": building_name,
+                            "level": level_name,
+                            "room": room_name,
+                        }
+                        room_number = self._room_number_from_options(building_name, room_name)
+                        if room_number is not None:
+                            record["room_number"] = room_number
+                        discovered.append(record)
+        return discovered
+
+    @staticmethod
+    def _room_number_from_options(building: str, room: str) -> str | None:
+        """Convert selector labels such as ``6号公寓`` / ``417房`` to ``06417``."""
+        building_match = re.match(r"\s*(\d+)", building)
+        room_match = re.fullmatch(r"\s*(\d{3})房\s*", room)
+        if building_match is None or room_match is None:
+            return None
+        building_number = int(building_match.group(1))
+        if not 0 <= building_number <= 99:
+            return None
+        return f"{building_number:02d}{room_match.group(1)}"
 
     async def _get_csrf_token(self, client: httpx.AsyncClient) -> str:
         try:
@@ -191,13 +300,17 @@ class HNUCMElectricityClient:
             raise ElectricityPlatformError("电费平台登录失败")
 
     async def _get_electricity(
-        self, client: httpx.AsyncClient, csrf_token: str, room_number: str
+        self,
+        client: httpx.AsyncClient,
+        csrf_token: str,
+        room_number: str,
+        campus: str,
     ) -> dict[str, Any]:
         for room_selection in await self._resolve_room_selections(
-            client, csrf_token, room_number
+            client, csrf_token, room_number, campus
         ):
             result = await self._get_electricity_for_selection(
-                client, csrf_token, room_number, room_selection
+                client, csrf_token, room_number, campus, room_selection
             )
             if result is not None:
                 return result
@@ -205,7 +318,11 @@ class HNUCMElectricityClient:
         raise ElectricityPlatformError("电费平台暂未返回该寝室的电表信息")
 
     async def _resolve_room_selections(
-        self, client: httpx.AsyncClient, csrf_token: str, room_number: str
+        self,
+        client: httpx.AsyncClient,
+        csrf_token: str,
+        room_number: str,
+        campus: str,
     ) -> list[dict[str, Any]]:
         """Resolve a displayed ``楼栋+房间`` number to portal option IDs."""
         building_number = int(room_number[:-3])
@@ -227,7 +344,7 @@ class HNUCMElectricityClient:
             client, csrf_token, "area", base_selection
         ):
             area_id = area.get("value")
-            if not isinstance(area_id, str) or area_id == "-1":
+            if not isinstance(area_id, str) or area_id == "-1" or not self._area_matches_campus(area, campus):
                 continue
             area_selection = {**base_selection, "areaid": area_id}
             for building in await self._get_room_options(
@@ -255,8 +372,20 @@ class HNUCMElectricityClient:
                         if isinstance(room_id, str) and room.get("label") == room_label:
                             selections.append({**level_selection, "roomid": room_id})
         if not selections:
-            raise ElectricityPlatformError("未找到该寝室对应的电费平台房间")
+            raise ElectricityPlatformError(
+                f"{campus}校区未找到该寝室对应的电费平台房间"
+            )
         return selections
+
+    @staticmethod
+    def _area_matches_campus(option: dict[str, Any], campus: str) -> bool:
+        """Match a discovered campus ID, its exact label, or the legacy hanpu alias."""
+        label = option.get("label")
+        return (
+            option.get("value") == campus
+            or label == campus
+            or (isinstance(label, str) and campus == "hanpu" and "含浦" in label)
+        )
 
     @staticmethod
     def _option_matches_number(option: dict[str, Any], number: int) -> bool:
@@ -300,6 +429,7 @@ class HNUCMElectricityClient:
         client: httpx.AsyncClient,
         csrf_token: str,
         room_number: str,
+        campus: str,
         room_selection: dict[str, Any],
     ) -> dict[str, Any] | None:
         body = {
@@ -331,13 +461,15 @@ class HNUCMElectricityClient:
             if isinstance(content, dict) and content.get("CzThirdInfo"):
                 if content.get("Succ") is False:
                     return None
-                return self._serialize_result(room_number, content["CzThirdInfo"])
+                return self._serialize_result(
+                    room_number, campus, content["CzThirdInfo"]
+                )
             if attempt < 2:
                 await asyncio.sleep(0.25)
         return None
 
     @staticmethod
-    def _serialize_result(room_number: str, meter: Any) -> dict[str, Any]:
+    def _serialize_result(room_number: str, campus: str, meter: Any) -> dict[str, Any]:
         if not isinstance(meter, dict):
             raise ElectricityPlatformError("电费平台返回了异常电表信息")
         if not any(
@@ -346,6 +478,7 @@ class HNUCMElectricityClient:
             raise ElectricityPlatformError("电费平台暂未返回该寝室的电量信息")
 
         return {
+            "campus": campus,
             "room_number": room_number,
             "name": meter.get("Czxm"),
             "meter_number": meter.get("Czzjh"),

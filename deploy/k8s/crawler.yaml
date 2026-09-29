@@ -1,8 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: crawler
-  namespace: university-crawler
+  name: university-crawler
+  namespace: atri-university-crawler
 spec:
   replicas: 1
   revisionHistoryLimit: 5
@@ -13,11 +13,11 @@ spec:
       maxUnavailable: 1
   selector:
     matchLabels:
-      app: crawler
+      app: university-crawler
   template:
     metadata:
       labels:
-        app: crawler
+        app: university-crawler
       annotations:
         crawler/release: __CRAWLER_RELEASE__
     spec:
@@ -60,7 +60,7 @@ spec:
             - name: tmp
               mountPath: /tmp
       containers:
-        - name: crawler
+        - name: university-crawler
           image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
           imagePullPolicy: IfNotPresent
           command:
@@ -76,9 +76,9 @@ spec:
             - configMapRef:
                 name: crawler-runtime
             - secretRef:
-                name: crawler-runtime-secrets
-            - secretRef:
                 name: crawler-redis-auth
+            - secretRef:
+                name: crawler-runtime-secrets
           env:
             - name: RELEASE_ID
               value: __CRAWLER_RELEASE__
@@ -132,12 +132,12 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: crawler
-  namespace: university-crawler
+  name: university-crawler
+  namespace: atri-university-crawler
 spec:
   type: ClusterIP
   selector:
-    app: crawler
+    app: university-crawler
   ports:
     - name: http
       port: 8000

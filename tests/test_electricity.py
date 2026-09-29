@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from adapter.hnucm_adapter.electricity import (
     encrypt_password,
 )
 from services.cookie_cache import InMemoryCookieCache, PortalSession
+from services.electricity_cache import DailyElectricityCache
 from services.electricity import (
     AccountPoolConfigurationError,
     ElectricityAccountPool,
@@ -38,6 +40,10 @@ def test_jsbn_hex_to_base64_matches_portal_conversion():
     assert _jsbn_hex_to_base64("fff") == "//=="
     assert _jsbn_hex_to_base64("ff") == "/w=="
     assert _jsbn_hex_to_base64("f") == "8==="
+
+
+def test_electricity_client_uses_hnucm_portal_by_default():
+    assert HNUCMElectricityClient().base_url == "http://cw-zfpt.hnucm.edu.cn"
 
 
 def test_password_is_rsa_encrypted_before_base64_conversion():
@@ -148,12 +154,13 @@ async def test_portal_login_room_query_and_cookie_session_reuse():
         ),
     )
 
-    result, session = await client.query("06417", "account", "password")
+    result, session = await client.query("06417", "hanpu", "account", "password")
     cached_result, refreshed_session = await client.query(
-        "06418", "account", "password", session=session
+        "06418", "hanpu", "account", "password", session=session
     )
 
     assert result == {
+        "campus": "hanpu",
         "room_number": "06417",
         "name": "6号公寓417房",
         "meter_number": "meter-1",
@@ -174,6 +181,67 @@ async def test_portal_login_room_query_and_cookie_session_reuse():
 
 
 @pytest.mark.asyncio
+async def test_portal_discovers_rooms_for_every_area():
+    public_key = "F" * 256
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/xysf/api/Token/Csrf":
+            return httpx.Response(200, json="csrf-token")
+        if request.url.path == "/xysf/login.aspx":
+            return httpx.Response(
+                200,
+                text=(
+                    f'<input type="hidden" id="pbk" value="{public_key}">'
+                    '<input type="hidden" id="ts" value="123456">'
+                ),
+            )
+        if request.url.path == "/xysf/api/User/App/Login":
+            return httpx.Response(200, json={"code": "0000"})
+        if request.url.path == "/xysf/api/user/ElecRoomYun/GetOption":
+            body = json.loads(request.content)
+            key, option = body["key"], body["option"]
+            choices = {
+                "area": [
+                    {"label": "含浦学生宿舍", "value": "campus-hanpu"},
+                    {"label": "东塘学生宿舍", "value": "campus-dongtang"},
+                ],
+                "build": [{"label": "6号公寓", "value": f"building-{option['areaid']}"}],
+                "level": [{"label": "6栋4层", "value": f"level-{option['buildid']}"}],
+                "room": [{"label": "417房", "value": f"room-{option['levelid']}"}],
+            }
+            return httpx.Response(200, json={"IsSuccess": True, "Content": choices[key]})
+        raise AssertionError(f"Unexpected request path: {request.url.path}")
+
+    client = HNUCMElectricityClient(
+        "https://payment.example",
+        client_factory=lambda **kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), **kwargs
+        ),
+    )
+
+    rooms, _session = await client.discover_rooms("account", "password")
+
+    assert rooms == [
+        {
+            "campus": "campus-hanpu",
+            "campus_name": "含浦学生宿舍",
+            "building": "6号公寓",
+            "level": "6栋4层",
+            "room": "417房",
+            "room_number": "06417",
+        },
+        {
+            "campus": "campus-dongtang",
+            "campus_name": "东塘学生宿舍",
+            "building": "6号公寓",
+            "level": "6栋4层",
+            "room": "417房",
+            "room_number": "06417",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_account_pool_rotates_and_retries_without_returning_account_data(
     tmp_path,
 ):
@@ -189,6 +257,7 @@ async def test_account_pool_rotates_and_retries_without_returning_account_data(
         async def query(
             self,
             room_number: str,
+            campus: str,
             username: str,
             password: str,
             session: PortalSession | None = None,
@@ -198,7 +267,11 @@ async def test_account_pool_rotates_and_retries_without_returning_account_data(
                 raise RuntimeError("login failed")
             assert password == "secret-b"
             return (
-                {"room_number": room_number, "remaining_electricity": "5kWh"},
+                {
+                    "campus": campus,
+                    "room_number": room_number,
+                    "remaining_electricity": "5kWh",
+                },
                 PortalSession({"sid": username}, "csrf"),
             )
 
@@ -208,10 +281,11 @@ async def test_account_pool_rotates_and_retries_without_returning_account_data(
         client_factory=FakeClient,
     )
 
-    first_result = await service.query("06417")
-    second_result = await service.query("06418")
+    first_result = await service.query("06417", "hanpu")
+    second_result = await service.query("06418", "hanpu")
 
     assert first_result == {
+        "campus": "hanpu",
         "room_number": "06417",
         "remaining_electricity": "5kWh",
     }
@@ -233,12 +307,16 @@ async def test_expired_cached_session_is_replaced_by_fresh_login(tmp_path):
         def __init__(self, _base_url: str):
             pass
 
-        async def query(self, room_number, username, password, session=None):
+        async def query(self, room_number, campus, username, password, session=None):
             calls.append(session is not None)
             if session is not None:
                 raise RuntimeError("session expired")
             return (
-                {"room_number": room_number, "remaining_electricity": "2kWh"},
+                {
+                    "campus": campus,
+                    "room_number": room_number,
+                    "remaining_electricity": "2kWh",
+                },
                 PortalSession({"sid": "fresh"}, "new-csrf"),
             )
 
@@ -252,7 +330,7 @@ async def test_expired_cached_session_is_replaced_by_fresh_login(tmp_path):
         account.cache_key, PortalSession({"sid": "expired"}, "old-csrf")
     )
 
-    result = await service.query("06417")
+    result = await service.query("06417", "hanpu")
 
     assert result["remaining_electricity"] == "2kWh"
     assert calls == [True, False]
@@ -300,7 +378,7 @@ async def test_account_pool_reports_missing_accounts_without_secret_details(tmp_
     )
 
     with pytest.raises(AccountPoolConfigurationError, match="没有可用账号"):
-        await service.query("06417")
+        await service.query("06417", "hanpu")
 
 
 @pytest.mark.asyncio
@@ -321,7 +399,7 @@ async def test_service_returns_safe_error_when_every_account_fails(tmp_path):
     )
 
     with pytest.raises(ElectricityQueryError) as error:
-        await service.query("06417")
+        await service.query("06417", "hanpu")
     assert "internal details" not in str(error.value)
 
 
@@ -343,4 +421,154 @@ async def test_service_returns_safe_platform_error_when_every_account_fails(tmp_
     )
 
     with pytest.raises(ElectricityQueryError, match="电费平台登录失败"):
-        await service.query("06417")
+        await service.query("06417", "hanpu")
+
+
+@pytest.mark.asyncio
+async def test_daily_reading_cache_avoids_repeating_platform_request(tmp_path):
+    _write_accounts(tmp_path / "accounts.json", ("account", "secret"))
+    calls = 0
+
+    class FakeRedis:
+        def __init__(self):
+            self.values = {}
+
+        async def get(self, key):
+            return self.values.get(key)
+
+        async def set(self, key, value, *, ex):
+            assert ex > 0
+            self.values[key] = value
+
+    class FakeClient:
+        def __init__(self, _base_url):
+            pass
+
+        async def query(self, room_number, campus, username, password, session=None):
+            nonlocal calls
+            calls += 1
+            return (
+                {"campus": campus, "room_number": room_number, "balance": 10.0},
+                PortalSession({"sid": "session"}, "csrf"),
+            )
+
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        client_factory=FakeClient,
+        reading_cache=DailyElectricityCache(redis_client=FakeRedis()),
+    )
+
+    assert await service.query("06417", "hanpu") == await service.query("06417", "hanpu")
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cached_room_reading_never_queries_portal(tmp_path):
+    catalog_path = tmp_path / "rooms.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "campus-hanpu",
+                        "campus_name": "含浦学生宿舍",
+                        "room_number": "06417",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeCache:
+        async def get(self, campus, room_number):
+            assert (campus, room_number) == ("campus-hanpu", "06417")
+            return {"campus": campus, "room_number": room_number, "balance": 5}
+
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        reading_cache=FakeCache(),
+    )
+    service.catalog_path = catalog_path
+
+    assert await service.get_cached_room_reading("06417", "campus-hanpu") == (
+        True,
+        {"campus": "campus-hanpu", "room_number": "06417", "balance": 5},
+    )
+    assert await service.get_cached_room_reading("06418", "campus-hanpu") == (
+        False,
+        None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_collection_resumes_from_persisted_batch_checkpoint(tmp_path):
+    catalog_path = tmp_path / "rooms.json"
+    state_path = tmp_path / "collection-state.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "campus-hanpu",
+                        "campus_name": "含浦学生宿舍",
+                        "room_number": room_number,
+                    }
+                    for room_number in ("06417", "06418", "06419")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = ElectricityService(
+        "https://payment.example", ElectricityAccountPool(tmp_path / "accounts.json")
+    )
+    service.catalog_path = catalog_path
+    service.collection_state_path = state_path
+    queried: list[str] = []
+
+    async def interrupted_query(room_number, _campus):
+        queried.append(room_number)
+        if room_number == "06419":
+            raise asyncio.CancelledError
+        return {"room_number": room_number}
+
+    service.query = interrupted_query
+    with pytest.raises(asyncio.CancelledError):
+        await service.collect_room_readings(batch_size=2, interval_seconds=0.001)
+    assert json.loads(state_path.read_text(encoding="utf-8"))["next_index"] == 2
+
+    resumed: list[str] = []
+
+    async def resumed_query(room_number, _campus):
+        resumed.append(room_number)
+        return {"room_number": room_number}
+
+    service.query = resumed_query
+    result = await service.resume_today_collection()
+    assert result == {"succeeded": 1, "failed": 0}
+    assert resumed == ["06419"]
+
+
+@pytest.mark.asyncio
+async def test_daily_reading_cache_falls_back_to_memory_when_redis_fails():
+    from redis.exceptions import ConnectionError
+
+    class UnavailableRedis:
+        async def get(self, _key, /):
+            raise ConnectionError("unavailable")
+
+        async def set(self, _key, _value, /, *, ex):
+            raise ConnectionError("unavailable")
+
+    cache = DailyElectricityCache(redis_client=UnavailableRedis())
+    value = {"campus": "hanpu", "room_number": "06417", "balance": 10.0}
+
+    assert await cache.get("hanpu", "06417") is None
+    await cache.set("hanpu", "06417", value)
+    cached_value = await cache.get("hanpu", "06417")
+
+    assert cached_value == value
+    assert cached_value is not value

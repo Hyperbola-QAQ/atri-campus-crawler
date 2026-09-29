@@ -44,4 +44,4 @@ class InMemoryCookieCache:
             self._entries.pop(key, None)
 
 
-# TODO(Valkey): replace this process-local cache with a shared Valkey backend.
+# TODO(Redis): replace this process-local cache with a shared Redis backend.
