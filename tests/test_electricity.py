@@ -462,6 +462,9 @@ async def test_daily_reading_cache_avoids_repeating_platform_request(tmp_path):
     assert await service.query("06417", "hanpu") == await service.query("06417", "hanpu")
     assert calls == 1
 
+    await service.query_live("06417", "hanpu")
+    assert calls == 2
+
 
 @pytest.mark.asyncio
 async def test_cached_room_reading_never_queries_portal(tmp_path):

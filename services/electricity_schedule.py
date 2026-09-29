@@ -10,12 +10,20 @@ from services.electricity import ElectricityService
 
 logger = logging.getLogger(__name__)
 
+# 运行 scripts/detect_electricity_update.py 得到稳定结论后，在此硬编码财务
+# 系统结算电费的五段 cron，例如 "0 7 * * *" 或 "30 * * * *"。这是上游财务
+# 系统的规律，不是本服务的采集任务，因而不通过接口或环境变量对外配置。
+FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON: str | None = None
+
 
 class ElectricitySchedule:
     """Run the two requested electricity jobs while the API process is alive."""
 
     def __init__(self, service: ElectricityService):
         self.service = service
+        self.financial_system_electricity_settlement_cron = (
+            FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON
+        )
         self.timezone = ZoneInfo(os.getenv("ELECTRICITY_SCHEDULE_TIMEZONE", "Asia/Shanghai"))
         self._tasks: list[asyncio.Task[None]] = []
 

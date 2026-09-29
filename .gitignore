@@ -29,3 +29,4 @@ logs/
 /config/academic_accounts.json
 /config/electricity_rooms.json
 /config/electricity_collection_state.json
+/config/electricity_update_monitor_state.json

@@ -251,19 +251,29 @@ class ElectricityService:
         return result
 
     async def query(self, room_number: str, campus: str) -> dict[str, Any]:
-        if not self.base_url:
-            raise AccountPoolConfigurationError("未配置电费平台地址")
-
         cached_result = await self.reading_cache.get(campus, room_number)
         if cached_result is not None:
             return cached_result
+
+        result = await self.query_live(room_number, campus)
+        await self.reading_cache.set(campus, room_number, result)
+        return result
+
+    async def query_live(self, room_number: str, campus: str) -> dict[str, Any]:
+        """Read a current meter value from the portal without using daily cache.
+
+        This is deliberately separate from :meth:`query`: operational monitors
+        need to see a finance-system refresh even after the daily API cache has
+        been populated.
+        """
+        if not self.base_url:
+            raise AccountPoolConfigurationError("未配置电费平台地址")
 
         accounts = await self.account_pool.rotated_accounts()
         platform_error: ElectricityPlatformError | None = None
         for account in accounts:
             try:
                 result = await self._query_account(account, room_number, campus)
-                await self.reading_cache.set(campus, room_number, result)
                 return result
             except ElectricityPlatformError as exc:
                 platform_error = exc

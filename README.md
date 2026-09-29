@@ -107,6 +107,29 @@ Authorization: Bearer <CRAWLER_INTERNAL_TOKEN>
 服务进程会在每周一 11:30（`Asia/Shanghai`）刷新一次目录；每天 07:30 开始按
 每批 2 间、批次间隔 1 秒（120 间/分钟），收集全量寝室的当天电费读数。
 
+### 探测财务系统刷新时间
+
+配置一个读数会实际变化的测试寝室后，运行下列脚本。它每到 `:00`、`:30` 直接向
+财务平台读取一次，不使用当天缓存；检测到变化时会把观测时刻和读数摘要保存到
+`ELECTRICITY_UPDATE_MONITOR_STATE_FILE`，并在有足够记录时输出建议的 cron。
+
+```bash
+ELECTRICITY_UPDATE_MONITOR_CAMPUS=hanpu \
+ELECTRICITY_UPDATE_MONITOR_ROOM_NUMBER=06417 \
+uv run python scripts/detect_electricity_update.py
+```
+
+若由系统 cron 执行，请每半小时以 `--once` 调用一次：
+
+```cron
+*/30 * * * * cd /path/to/university_crawler && uv run python scripts/detect_electricity_update.py --once
+```
+
+半小时采样只能确认刷新发生在哪个半小时区间内；确认规律后，将脚本给出的 cron
+硬编码到 `services/electricity_schedule.py` 的
+`FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON`。该值只标示上游财务系统的结算
+规律，不会出现在电费接口，也不控制本服务的采集计划。
+
 也可以手动刷新：
 
 ```bash
