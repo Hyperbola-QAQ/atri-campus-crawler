@@ -365,13 +365,30 @@ class ElectricityService:
         catalog = self.get_room_catalog()
         if catalog is None:
             return None, None
+        resolved_campus = self._resolve_catalog_campus(catalog, campus)
         known_room = any(
-            room.get("campus") == campus and room.get("room_number") == room_number
+            room.get("campus") == resolved_campus
+            and room.get("room_number") == room_number
             for room in catalog["rooms"]
         )
         if not known_room:
             return False, None
-        return True, await self.reading_cache.get(campus, room_number)
+        return True, await self.reading_cache.get(resolved_campus, room_number)
+
+    @staticmethod
+    def _resolve_catalog_campus(catalog: dict[str, Any], campus: str) -> str:
+        """Map the legacy ``hanpu`` API alias to its current portal area ID."""
+        if campus != "hanpu":
+            return campus
+        for room in catalog["rooms"]:
+            if (
+                isinstance(room, dict)
+                and isinstance(room.get("campus"), str)
+                and isinstance(room.get("campus_name"), str)
+                and "含浦" in room["campus_name"]
+            ):
+                return room["campus"]
+        return campus
 
     async def needs_today_collection(
         self, *, scheduled_time: time = time(7, 30)

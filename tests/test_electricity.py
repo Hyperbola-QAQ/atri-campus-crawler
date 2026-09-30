@@ -533,6 +533,42 @@ async def test_cached_room_reading_never_queries_portal(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cached_room_reading_resolves_hanpu_to_catalog_area_id(tmp_path):
+    catalog_path = tmp_path / "rooms.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "001000000007",
+                        "campus_name": "含浦学生宿舍",
+                        "room_number": "06417",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeCache:
+        async def get(self, campus, room_number):
+            assert (campus, room_number) == ("001000000007", "06417")
+            return {"campus": campus, "room_number": room_number}
+
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        reading_cache=FakeCache(),
+    )
+    service.catalog_path = catalog_path
+
+    assert await service.get_cached_room_reading("06417", "hanpu") == (
+        True,
+        {"campus": "001000000007", "room_number": "06417"},
+    )
+
+
+@pytest.mark.asyncio
 async def test_service_detects_an_entirely_missing_current_day_cache(tmp_path):
     catalog_path = tmp_path / "rooms.json"
     catalog_path.write_text(
