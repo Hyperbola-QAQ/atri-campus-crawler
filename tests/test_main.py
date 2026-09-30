@@ -149,6 +149,24 @@ async def test_health_is_available():
 
 
 @pytest.mark.asyncio
+async def test_startup_collects_when_today_cache_is_missing(monkeypatch):
+    service = AsyncMock()
+    service.needs_today_collection.return_value = True
+    service.collect_room_readings.return_value = {"succeeded": 1, "failed": 0}
+
+    async def get_service():
+        return service
+
+    monkeypatch.setattr(main, "get_electricity_service", get_service)
+
+    await main._initial_electricity_sync()
+
+    service.refresh_room_catalog.assert_awaited_once_with()
+    service.needs_today_collection.assert_awaited_once_with()
+    service.collect_room_readings.assert_awaited_once_with(force=True)
+
+
+@pytest.mark.asyncio
 async def test_electricity_room_catalog_endpoint_returns_saved_catalog(tmp_path):
     service = AsyncMock()
     service.get_room_catalog.return_value = {

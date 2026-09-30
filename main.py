@@ -90,17 +90,26 @@ async def get_academic_account_pool() -> AcademicAccountPool:
     return _cached_academic_account_pool()
 
 
-async def _initial_room_catalog_sync() -> None:
-    """Synchronise once per process start without making the API unavailable."""
+async def _initial_electricity_sync() -> None:
+    """Synchronise catalog, then repair a missing current-day cache after 07:30."""
+    service = await get_electricity_service()
     try:
-        await (await get_electricity_service()).refresh_room_catalog()
+        await service.refresh_room_catalog()
     except (AccountPoolConfigurationError, ElectricityQueryError):
         logger.warning("Initial electricity room catalog sync failed")
+    try:
+        if await service.needs_today_collection():
+            result = await service.collect_room_readings(force=True)
+            logger.info("Startup electricity reading collection finished: %s", result)
+    except (AccountPoolConfigurationError, ElectricityQueryError):
+        logger.warning("Startup electricity reading collection failed")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.electricity_catalog_task = asyncio.create_task(_initial_room_catalog_sync())
+    app.state.electricity_catalog_task = asyncio.create_task(
+        _initial_electricity_sync()
+    )
     app.state.electricity_schedule = ElectricitySchedule(
         await get_electricity_service()
     )

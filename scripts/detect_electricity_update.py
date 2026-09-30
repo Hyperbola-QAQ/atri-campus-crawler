@@ -21,7 +21,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from services.electricity import ElectricityService  # noqa: E402
+from services.electricity import (  # noqa: E402
+    AccountPoolConfigurationError,
+    ElectricityQueryError,
+    ElectricityService,
+)
 
 
 def _timezone() -> ZoneInfo:
@@ -48,11 +52,12 @@ def _read_state(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return {"observations": [], "updates": []}
+        return {"observations": [], "updates": [], "failures": []}
     if not isinstance(data, dict):
-        return {"observations": [], "updates": []}
+        return {"observations": [], "updates": [], "failures": []}
     data.setdefault("observations", [])
     data.setdefault("updates", [])
+    data.setdefault("failures", [])
     return data
 
 
@@ -89,13 +94,28 @@ def _suggest_cron(updates: list[dict[str, Any]]) -> str | None:
 
 async def observe_once(campus: str, room_number: str, state_path: Path) -> None:
     now = datetime.now(_timezone()).replace(second=0, microsecond=0)
-    reading = await ElectricityService.from_environment().query_live(
-        room_number, campus
-    )
-    fingerprint = _reading_fingerprint(reading)
     state = _read_state(state_path)
+    try:
+        reading = await ElectricityService.from_environment().query_live(
+            room_number, campus
+        )
+    except (AccountPoolConfigurationError, ElectricityQueryError) as exc:
+        state["failures"].append({"observed_at": now.isoformat(), "error": str(exc)})
+        state["failures"] = state["failures"][-100:]
+        _write_state(state_path, state)
+        print(f"财务系统暂不可用：{now.isoformat()}，{exc}；将在下个半小时继续检测")
+        return
+
+    fingerprint = _reading_fingerprint(reading)
     observations = state["observations"]
-    previous = observations[-1] if observations else None
+    previous = next(
+        (
+            observation
+            for observation in reversed(observations)
+            if isinstance(observation, dict) and observation.get("fingerprint")
+        ),
+        None,
+    )
     changed = previous is not None and previous.get("fingerprint") != fingerprint
     observation = {
         "observed_at": now.isoformat(),

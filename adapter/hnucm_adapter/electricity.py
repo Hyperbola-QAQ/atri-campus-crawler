@@ -184,11 +184,19 @@ class HNUCMElectricityClient:
         self, client: httpx.AsyncClient, csrf_token: str
     ) -> list[dict[str, str]]:
         base_selection = {
-            "areaid": "-1", "buildid": "-1", "roomid": "-1", "levelid": "-1",
-            "IsLxr": False, "IsDefault": False, "IsFirst": False, "Cxid": "",
+            "areaid": "-1",
+            "buildid": "-1",
+            "roomid": "-1",
+            "levelid": "-1",
+            "IsLxr": False,
+            "IsDefault": False,
+            "IsFirst": False,
+            "Cxid": "",
         }
         discovered: list[dict[str, str]] = []
-        for area in await self._get_room_options(client, csrf_token, "area", base_selection):
+        for area in await self._get_room_options(
+            client, csrf_token, "area", base_selection
+        ):
             area_id, area_name = area.get("value"), area.get("label")
             if not isinstance(area_id, str) or not isinstance(area_name, str):
                 continue
@@ -198,28 +206,46 @@ class HNUCMElectricityClient:
                 # rooms and must not enter the electricity collection queue.
                 continue
             area_selection = {**base_selection, "areaid": area_id}
-            buildings = await self._get_room_options(
-                client, csrf_token, "build", area_selection
-            )
+            try:
+                buildings = await self._get_room_options(
+                    client, csrf_token, "build", area_selection
+                )
+            except ElectricityPlatformError:
+                # A single disabled area can return a non-selector response.
+                # Keep the rest of the dorm catalog available for collection.
+                continue
             for building in buildings:
-                building_id, building_name = building.get("value"), building.get("label")
-                if not isinstance(building_id, str) or not isinstance(building_name, str):
+                building_id, building_name = (
+                    building.get("value"),
+                    building.get("label"),
+                )
+                if not isinstance(building_id, str) or not isinstance(
+                    building_name, str
+                ):
                     continue
                 building_selection = {**area_selection, "buildid": building_id}
-                levels = await self._get_room_options(
-                    client, csrf_token, "level", building_selection
-                )
+                try:
+                    levels = await self._get_room_options(
+                        client, csrf_token, "level", building_selection
+                    )
+                except ElectricityPlatformError:
+                    continue
                 for level in levels:
                     level_id, level_name = level.get("value"), level.get("label")
                     if not isinstance(level_id, str) or not isinstance(level_name, str):
                         continue
                     level_selection = {**building_selection, "levelid": level_id}
-                    rooms = await self._get_room_options(
-                        client, csrf_token, "room", level_selection
-                    )
+                    try:
+                        rooms = await self._get_room_options(
+                            client, csrf_token, "room", level_selection
+                        )
+                    except ElectricityPlatformError:
+                        continue
                     for room in rooms:
                         room_id, room_name = room.get("value"), room.get("label")
-                        if not isinstance(room_id, str) or not isinstance(room_name, str):
+                        if not isinstance(room_id, str) or not isinstance(
+                            room_name, str
+                        ):
                             continue
                         record = {
                             "campus": area_id,
@@ -228,7 +254,9 @@ class HNUCMElectricityClient:
                             "level": level_name,
                             "room": room_name,
                         }
-                        room_number = self._room_number_from_options(building_name, room_name)
+                        room_number = self._room_number_from_options(
+                            building_name, room_name
+                        )
                         if room_number is not None:
                             record["room_number"] = room_number
                         discovered.append(record)
@@ -344,7 +372,11 @@ class HNUCMElectricityClient:
             client, csrf_token, "area", base_selection
         ):
             area_id = area.get("value")
-            if not isinstance(area_id, str) or area_id == "-1" or not self._area_matches_campus(area, campus):
+            if (
+                not isinstance(area_id, str)
+                or area_id == "-1"
+                or not self._area_matches_campus(area, campus)
+            ):
                 continue
             area_selection = {**base_selection, "areaid": area_id}
             for building in await self._get_room_options(
@@ -420,7 +452,15 @@ class HNUCMElectricityClient:
         if not isinstance(result, dict):
             raise ElectricityPlatformError("电费平台房间信息格式异常")
         content = result.get("Content")
-        if result.get("IsSuccess") is not True or not isinstance(content, list):
+        if result.get("IsSuccess") is not True:
+            code = result.get("RetCode")
+            message = result.get("RetMsg")
+            if isinstance(code, str) and isinstance(message, str) and message:
+                raise ElectricityPlatformError(
+                    f"电费平台房间信息请求失败（{code}: {message}）"
+                )
+            raise ElectricityPlatformError("电费平台房间信息请求失败")
+        if not isinstance(content, list):
             raise ElectricityPlatformError("电费平台房间信息格式异常")
         return [item for item in content if isinstance(item, dict)]
 

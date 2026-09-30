@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import time
 from pathlib import Path
 
 import httpx
@@ -44,6 +45,31 @@ def test_jsbn_hex_to_base64_matches_portal_conversion():
 
 def test_electricity_client_uses_hnucm_portal_by_default():
     assert HNUCMElectricityClient().base_url == "http://cw-zfpt.hnucm.edu.cn"
+
+
+@pytest.mark.asyncio
+async def test_room_option_business_error_includes_upstream_reason():
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "IsSuccess": False,
+                "RetCode": "500",
+                "RetMsg": "服务器内部错误",
+                "Content": None,
+            },
+        )
+
+    client = HNUCMElectricityClient()
+    async with httpx.AsyncClient(
+        base_url="https://payment.example",
+        transport=httpx.MockTransport(handler),
+    ) as http_client:
+        with pytest.raises(
+            ElectricityPlatformError,
+            match="500: 服务器内部错误",
+        ):
+            await client._get_room_options(http_client, "csrf", "area", {})
 
 
 def test_password_is_rsa_encrypted_before_base64_conversion():
@@ -504,6 +530,44 @@ async def test_cached_room_reading_never_queries_portal(tmp_path):
         False,
         None,
     )
+
+
+@pytest.mark.asyncio
+async def test_service_detects_an_entirely_missing_current_day_cache(tmp_path):
+    catalog_path = tmp_path / "rooms.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "campus-hanpu",
+                        "campus_name": "含浦学生宿舍",
+                        "room_number": "06417",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeCache:
+        def __init__(self, value):
+            self.value = value
+
+        async def get(self, _campus, _room_number):
+            return self.value
+
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        reading_cache=FakeCache(None),
+    )
+    service.catalog_path = catalog_path
+
+    assert await service.needs_today_collection(scheduled_time=time(0))
+
+    service.reading_cache = FakeCache({"remaining_electricity": "5kWh"})
+    assert not await service.needs_today_collection(scheduled_time=time(0))
 
 
 @pytest.mark.asyncio

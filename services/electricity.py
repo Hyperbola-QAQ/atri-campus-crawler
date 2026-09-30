@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 import random
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -373,12 +373,41 @@ class ElectricityService:
             return False, None
         return True, await self.reading_cache.get(campus, room_number)
 
+    async def needs_today_collection(
+        self, *, scheduled_time: time = time(7, 30)
+    ) -> bool:
+        """Return whether no current-day reading exists after the daily schedule.
+
+        This is used on process startup: a restart after the scheduled time
+        should repair an entirely missing daily cache without overwriting an
+        already collected day.
+        """
+        timezone_name = os.getenv("ELECTRICITY_CACHE_TIMEZONE", "Asia/Shanghai")
+        now = datetime.now(ZoneInfo(timezone_name))
+        if now.time() < scheduled_time:
+            return False
+        catalog = self.get_room_catalog()
+        if catalog is None:
+            return True
+        rooms = [
+            room
+            for room in catalog["rooms"]
+            if isinstance(room, dict)
+            and isinstance(room.get("campus"), str)
+            and isinstance(room.get("room_number"), str)
+        ]
+        for room in rooms:
+            if await self.reading_cache.get(room["campus"], room["room_number"]):
+                return False
+        return True
+
     async def collect_room_readings(
         self,
         *,
         batch_size: int = 2,
         interval_seconds: float = 1,
         jitter_seconds: float = 0,
+        force: bool = False,
     ) -> dict[str, int]:
         """Collect one daily reading for every catalogued dorm at a gentle rate."""
         if batch_size < 1 or interval_seconds <= 0 or jitter_seconds < 0:
@@ -404,6 +433,8 @@ class ElectricityService:
                 and isinstance(state.get("next_index"), int)
                 else 0
             )
+            if force:
+                next_index = 0
             next_index = min(max(0, next_index), len(rooms))
             succeeded = 0
             failed = 0

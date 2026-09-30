@@ -24,7 +24,9 @@ class ElectricitySchedule:
         self.financial_system_electricity_settlement_cron = (
             FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON
         )
-        self.timezone = ZoneInfo(os.getenv("ELECTRICITY_SCHEDULE_TIMEZONE", "Asia/Shanghai"))
+        self.timezone = ZoneInfo(
+            os.getenv("ELECTRICITY_SCHEDULE_TIMEZONE", "Asia/Shanghai")
+        )
         self._tasks: list[asyncio.Task[None]] = []
 
     def start(self) -> None:
@@ -32,6 +34,7 @@ class ElectricitySchedule:
             asyncio.create_task(self._resume_interrupted_collection()),
             asyncio.create_task(self._run_weekly_catalog_refresh()),
             asyncio.create_task(self._run_daily_reading_collection()),
+            asyncio.create_task(self._retry_failed_daily_collection()),
         ]
 
     async def stop(self) -> None:
@@ -68,6 +71,19 @@ class ElectricitySchedule:
             except Exception:
                 logger.exception("Scheduled electricity reading collection failed")
 
+    async def _retry_failed_daily_collection(self) -> None:
+        """Retry an unavailable finance platform during normal daytime hours."""
+        while True:
+            await self._sleep_until(self._next_collection_retry())
+            try:
+                result = await self.service.collect_room_readings()
+                if result["succeeded"] or result["failed"]:
+                    logger.info("Retried electricity reading collection: %s", result)
+            except Exception as exc:
+                # Keep this task alive so that it can retry when the platform
+                # becomes available again.
+                logger.warning("Electricity reading collection will retry: %s", exc)
+
     async def _sleep_until(self, scheduled_at: datetime) -> None:
         seconds = max(0, (scheduled_at - datetime.now(self.timezone)).total_seconds())
         await asyncio.sleep(seconds)
@@ -84,3 +100,18 @@ class ElectricitySchedule:
             now.date() + timedelta(days=days), scheduled_time, tzinfo=self.timezone
         )
         return candidate if candidate > now else candidate + timedelta(days=7)
+
+    def _next_collection_retry(self) -> datetime:
+        now = datetime.now(self.timezone)
+        first_retry = datetime.combine(now.date(), time(8), tzinfo=self.timezone)
+        last_retry = datetime.combine(now.date(), time(23), tzinfo=self.timezone)
+        if now < first_retry:
+            return first_retry
+        if now >= last_retry:
+            return first_retry + timedelta(days=1)
+        candidate = now.replace(second=0, microsecond=0)
+        if candidate.minute < 30:
+            candidate = candidate.replace(minute=30)
+        else:
+            candidate = (candidate + timedelta(hours=1)).replace(minute=0)
+        return candidate if candidate < last_retry else first_retry + timedelta(days=1)
