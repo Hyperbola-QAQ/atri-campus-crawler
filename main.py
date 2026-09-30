@@ -91,7 +91,7 @@ async def get_academic_account_pool() -> AcademicAccountPool:
 
 
 async def _initial_electricity_sync() -> None:
-    """Synchronise catalog, then repair a missing current-day cache after 07:30."""
+    """Synchronise catalog, then repair a missing cache after 11:00 settlement."""
     service = await get_electricity_service()
     try:
         await service.refresh_room_catalog()

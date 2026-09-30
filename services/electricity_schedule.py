@@ -64,9 +64,9 @@ class ElectricitySchedule:
 
     async def _run_daily_reading_collection(self) -> None:
         while True:
-            await self._sleep_until(self._next_daily(time(7, 30)))
+            await self._sleep_until(self._next_daily(time(11)))
             try:
-                result = await self.service.collect_room_readings()
+                result = await self.service.collect_room_readings(force=True)
                 logger.info("Daily electricity collection finished: %s", result)
             except Exception:
                 logger.exception("Scheduled electricity reading collection failed")
@@ -76,8 +76,8 @@ class ElectricitySchedule:
         while True:
             await self._sleep_until(self._next_collection_retry())
             try:
-                result = await self.service.collect_room_readings()
-                if result["succeeded"] or result["failed"]:
+                if await self.service.needs_today_collection():
+                    result = await self.service.collect_room_readings(force=True)
                     logger.info("Retried electricity reading collection: %s", result)
             except Exception as exc:
                 # Keep this task alive so that it can retry when the platform
@@ -103,7 +103,7 @@ class ElectricitySchedule:
 
     def _next_collection_retry(self) -> datetime:
         now = datetime.now(self.timezone)
-        first_retry = datetime.combine(now.date(), time(8), tzinfo=self.timezone)
+        first_retry = datetime.combine(now.date(), time(11, 30), tzinfo=self.timezone)
         last_retry = datetime.combine(now.date(), time(23), tzinfo=self.timezone)
         if now < first_retry:
             return first_retry

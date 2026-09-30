@@ -607,6 +607,58 @@ async def test_service_detects_an_entirely_missing_current_day_cache(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_forced_collection_bypasses_the_daily_cache(tmp_path):
+    catalog_path = tmp_path / "rooms.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "campus-hanpu",
+                        "campus_name": "含浦学生宿舍",
+                        "room_number": "06417",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeCache:
+        def __init__(self):
+            self.values = {
+                ("campus-hanpu", "06417"): {"remaining_electricity": "stale"}
+            }
+
+        async def get(self, campus, room_number):
+            return self.values.get((campus, room_number))
+
+        async def set(self, campus, room_number, value):
+            self.values[(campus, room_number)] = value
+
+    cache = FakeCache()
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        reading_cache=cache,
+    )
+    service.catalog_path = catalog_path
+
+    async def query_live(room_number, campus):
+        assert (room_number, campus) == ("06417", "campus-hanpu")
+        return {"remaining_electricity": "fresh"}
+
+    service.query_live = query_live
+
+    assert await service.collect_room_readings(
+        batch_size=1, interval_seconds=0.001, force=True
+    ) == {"succeeded": 1, "failed": 0}
+    assert await cache.get("campus-hanpu", "06417") == {
+        "remaining_electricity": "fresh"
+    }
+
+
+@pytest.mark.asyncio
 async def test_collection_resumes_from_persisted_batch_checkpoint(tmp_path):
     catalog_path = tmp_path / "rooms.json"
     state_path = tmp_path / "collection-state.json"

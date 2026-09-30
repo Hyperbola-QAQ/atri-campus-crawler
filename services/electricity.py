@@ -391,13 +391,12 @@ class ElectricityService:
         return campus
 
     async def needs_today_collection(
-        self, *, scheduled_time: time = time(7, 30)
+        self, *, scheduled_time: time = time(11)
     ) -> bool:
-        """Return whether no current-day reading exists after the daily schedule.
+        """Return whether any current-day reading is missing after settlement.
 
         This is used on process startup: a restart after the scheduled time
-        should repair an entirely missing daily cache without overwriting an
-        already collected day.
+        should repair a missing or incomplete daily cache.
         """
         timezone_name = os.getenv("ELECTRICITY_CACHE_TIMEZONE", "Asia/Shanghai")
         now = datetime.now(ZoneInfo(timezone_name))
@@ -414,9 +413,9 @@ class ElectricityService:
             and isinstance(room.get("room_number"), str)
         ]
         for room in rooms:
-            if await self.reading_cache.get(room["campus"], room["room_number"]):
-                return False
-        return True
+            if not await self.reading_cache.get(room["campus"], room["room_number"]):
+                return True
+        return False
 
     async def collect_room_readings(
         self,
@@ -467,7 +466,15 @@ class ElectricityService:
                 batch = rooms[batch_index : batch_index + batch_size]
                 for room in batch:
                     try:
-                        await self.query(room["room_number"], room["campus"])
+                        if force:
+                            result = await self.query_live(
+                                room["room_number"], room["campus"]
+                            )
+                            await self.reading_cache.set(
+                                room["campus"], room["room_number"], result
+                            )
+                        else:
+                            await self.query(room["room_number"], room["campus"])
                     except (AccountPoolConfigurationError, ElectricityQueryError):
                         failed += 1
                     else:
