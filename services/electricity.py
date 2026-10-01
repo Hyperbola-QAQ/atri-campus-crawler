@@ -424,10 +424,18 @@ class ElectricityService:
         interval_seconds: float = 1,
         jitter_seconds: float = 0,
         force: bool = False,
+        retry_missing: bool = False,
     ) -> dict[str, int]:
-        """Collect one daily reading for every catalogued dorm at a gentle rate."""
+        """Collect daily readings, optionally retrying only cache misses.
+
+        ``force`` is for the first daily scan: it deliberately refreshes every
+        reading after settlement.  Retry jobs must not use it, otherwise a
+        single unavailable meter causes the whole catalog to be queried again.
+        """
         if batch_size < 1 or interval_seconds <= 0 or jitter_seconds < 0:
             raise ValueError("电费采集计划参数无效")
+        if force and retry_missing:
+            raise ValueError("强制采集不能与缺失重试同时使用")
         async with self._collection_lock:
             catalog = self.get_room_catalog()
             if catalog is None:
@@ -440,6 +448,18 @@ class ElectricityService:
                 and isinstance(room.get("campus"), str)
                 and isinstance(room.get("room_number"), str)
             ]
+            if retry_missing:
+                # Cached rooms already have today's immutable snapshot.  Keep
+                # retries small and avoid putting avoidable pressure on the
+                # finance platform.
+                rooms = [
+                    room
+                    for room in rooms
+                    if await self.reading_cache.get(
+                        room["campus"], room["room_number"]
+                    )
+                    is None
+                ]
             collection_date = self._collection_date()
             state = self._read_collection_state()
             next_index = (
@@ -449,7 +469,10 @@ class ElectricityService:
                 and isinstance(state.get("next_index"), int)
                 else 0
             )
-            if force:
+            if force or retry_missing:
+                # Retry targets are a dynamic subset, so a checkpoint from
+                # the full scan must never skip them.  Retry progress is not
+                # persisted; a later retry safely rechecks remaining misses.
                 next_index = 0
             next_index = min(max(0, next_index), len(rooms))
             succeeded = 0
@@ -479,13 +502,14 @@ class ElectricityService:
                         failed += 1
                     else:
                         succeeded += 1
-                self._write_collection_state(
-                    {
-                        "date": collection_date,
-                        "next_index": batch_index + len(batch),
-                        "total": len(rooms),
-                    }
-                )
+                if not retry_missing:
+                    self._write_collection_state(
+                        {
+                            "date": collection_date,
+                            "next_index": batch_index + len(batch),
+                            "total": len(rooms),
+                        }
+                    )
             return {"succeeded": succeeded, "failed": failed}
 
     async def resume_today_collection(self) -> dict[str, int] | None:

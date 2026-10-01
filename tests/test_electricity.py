@@ -1,7 +1,8 @@
 import asyncio
 import json
-from datetime import time
+from datetime import datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -656,6 +657,62 @@ async def test_forced_collection_bypasses_the_daily_cache(tmp_path):
     assert await cache.get("campus-hanpu", "06417") == {
         "remaining_electricity": "fresh"
     }
+
+
+@pytest.mark.asyncio
+async def test_retry_collection_queries_only_rooms_missing_from_daily_cache(tmp_path):
+    catalog_path = tmp_path / "rooms.json"
+    state_path = tmp_path / "collection-state.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "campus-hanpu",
+                        "campus_name": "含浦学生宿舍",
+                        "room_number": room_number,
+                    }
+                    for room_number in ("06417", "06418")
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path.write_text(
+        json.dumps(
+            {
+                "date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
+                "next_index": 2,
+                "total": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeCache:
+        async def get(self, _campus, room_number):
+            return {"remaining_electricity": "5kWh"} if room_number == "06417" else None
+
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        reading_cache=FakeCache(),
+    )
+    service.catalog_path = catalog_path
+    service.collection_state_path = state_path
+    queried: list[str] = []
+
+    async def query(room_number, _campus):
+        queried.append(room_number)
+        return {"room_number": room_number}
+
+    service.query = query
+
+    assert await service.collect_room_readings(
+        batch_size=1, interval_seconds=0.001, retry_missing=True
+    ) == {"succeeded": 1, "failed": 0}
+    assert queried == ["06418"]
+    assert json.loads(state_path.read_text(encoding="utf-8"))["next_index"] == 2
 
 
 @pytest.mark.asyncio

@@ -77,7 +77,9 @@ class ElectricitySchedule:
             await self._sleep_until(self._next_collection_retry())
             try:
                 if await self.service.needs_today_collection():
-                    result = await self.service.collect_room_readings(force=True)
+                    result = await self.service.collect_room_readings(
+                        retry_missing=True
+                    )
                     logger.info("Retried electricity reading collection: %s", result)
             except Exception as exc:
                 # Keep this task alive so that it can retry when the platform
