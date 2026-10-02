@@ -14,6 +14,15 @@ class ElectricityResponse(BaseModel):
     category: str | None = None
 
 
+class ElectricityCollectionStatusResponse(BaseModel):
+    """Progress of crawler's current daily all-room electricity collection."""
+
+    collection_date: str
+    total: int = Field(ge=0)
+    queried: int = Field(ge=0)
+    completed: bool
+
+
 class ElectricityAccountResponse(BaseModel):
     """Public account representation. Passwords are intentionally omitted."""
 

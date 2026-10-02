@@ -25,6 +25,7 @@ from schemas.electricity_schema import (
     ElectricityAccountListResponse,
     ElectricityAccountResponse,
     ElectricityAccountUpdate,
+    ElectricityCollectionStatusResponse,
     ElectricityResponse,
 )
 from services.electricity import (
@@ -344,6 +345,18 @@ async def refresh_electricity_rooms(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ElectricityQueryError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/v1/electricity/collection-status",
+    response_model=ElectricityCollectionStatusResponse,
+    tags=["electricity"],
+)
+async def get_electricity_collection_status(
+    service: ElectricityService = Depends(get_electricity_service),
+) -> ElectricityCollectionStatusResponse:
+    """Report whether today's scheduled all-room query has finished."""
+    return ElectricityCollectionStatusResponse(**service.daily_collection_status())
 
 
 @app.get(

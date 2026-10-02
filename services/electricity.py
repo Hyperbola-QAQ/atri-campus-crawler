@@ -391,7 +391,7 @@ class ElectricityService:
         return campus
 
     async def needs_today_collection(
-        self, *, scheduled_time: time = time(11)
+        self, *, scheduled_time: time = time(5, 30)
     ) -> bool:
         """Return whether any current-day reading is missing after settlement.
 
@@ -416,6 +416,37 @@ class ElectricityService:
             if not await self.reading_cache.get(room["campus"], room["room_number"]):
                 return True
         return False
+
+    def daily_collection_status(self) -> dict[str, Any]:
+        """Return progress for today's scheduled full-room collection.
+
+        The server uses this lightweight status rather than probing every room
+        while the crawler is still filling its daily cache.  ``completed``
+        means every room in the scheduled pass has been queried; individual
+        failed rooms may still be handled by the crawler retry job.
+        """
+        state = self._read_collection_state()
+        today = self._collection_date()
+        if state is None or state.get("date") != today:
+            return {
+                "collection_date": today,
+                "total": 0,
+                "queried": 0,
+                "completed": False,
+            }
+        total = state.get("total")
+        queried = state.get("next_index")
+        if not isinstance(total, int) or total < 0:
+            total = 0
+        if not isinstance(queried, int) or queried < 0:
+            queried = 0
+        queried = min(queried, total)
+        return {
+            "collection_date": today,
+            "total": total,
+            "queried": queried,
+            "completed": queried >= total,
+        }
 
     async def collect_room_readings(
         self,

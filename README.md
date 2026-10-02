@@ -104,12 +104,20 @@ POST /api/v1/electricity/rooms/refresh
 Authorization: Bearer <CRAWLER_INTERNAL_TOKEN>
 ```
 
-服务进程会在每周一 11:30（`Asia/Shanghai`）刷新一次目录；每天 11:00（财务系统
-开始更新后）开始按
+财务系统每日 02:00--05:30（`Asia/Shanghai`）处于维护窗口；维护结束后的 05:30
+即可将平台读数视为当日已出炉的数据。服务进程会在每周一 11:30 刷新一次目录；每天
+05:30 开始按
 每批 2 间、批次间隔 1 秒（120 间/分钟），收集全量寝室的当天电费读数。首次失败后
-会在白天每半小时重试，避免单次上游故障导致全天没有新数据。
-服务重启时也会立即同步目录；若此时已过 11:00 且当天缓存缺失或不完整，会立刻
+会从 06:00 起每半小时重试，避免单次上游故障导致全天没有新数据。
+服务重启时也会立即同步目录；若此时已过 05:30 且当天缓存缺失或不完整，会立刻
 绕过旧缓存补采全量寝室。
+
+全量采集的进度可由内网 server 通过下列接口读取。它只返回当日已查询数量和是否已
+完成，不返回寝室电费读数；当 `completed` 为 `true` 时，server 才应开始全量镜像。
+
+```http
+GET /api/v1/electricity/collection-status
+```
 
 ### 探测财务系统刷新时间
 
@@ -129,10 +137,11 @@ uv run python scripts/detect_electricity_update.py
 */30 * * * * cd /path/to/university_crawler && uv run python scripts/detect_electricity_update.py --once
 ```
 
-半小时采样只能确认刷新发生在哪个半小时区间内；确认规律后，将脚本给出的 cron
-硬编码到 `services/electricity_schedule.py` 的
-`FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON`。该值只标示上游财务系统的结算
-规律，不会出现在电费接口，也不控制本服务的采集计划。
+半小时采样确认的当前规律是：财务系统在 02:00--05:30 维护，05:30 后当天读数出炉。
+这个规律已固化在 `services/electricity_schedule.py`：维护窗口从
+`FINANCIAL_SYSTEM_MAINTENANCE_START` 开始，日数据在
+`FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT`（05:30）可采集。结算 cron 为
+`30 5 * * *`。
 
 也可以手动刷新：
 

@@ -10,10 +10,16 @@ from services.electricity import ElectricityService
 
 logger = logging.getLogger(__name__)
 
-# 运行 scripts/detect_electricity_update.py 得到稳定结论后，在此硬编码财务
-# 系统结算电费的五段 cron，例如 "0 7 * * *" 或 "30 * * * *"。这是上游财务
-# 系统的规律，不是本服务的采集任务，因而不通过接口或环境变量对外配置。
-FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON: str | None = None
+# 财务系统每日 02:00--05:30 维护。05:30 之后读取到的是当日结算后的数据，
+# 因而采集与补采均以这个时刻为准，而不是沿用早期观察时的 11:00。
+FINANCIAL_SYSTEM_MAINTENANCE_START = time(2)
+FINANCIAL_SYSTEM_MAINTENANCE_END = time(5, 30)
+FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT = FINANCIAL_SYSTEM_MAINTENANCE_END
+FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON = "30 5 * * *"
+
+# 为日采集留出一个完整的半小时启动窗口；失败重试不应与首轮全量采集同时开始。
+FIRST_DAILY_COLLECTION_RETRY_AT = time(6)
+LAST_DAILY_COLLECTION_RETRY_AT = time(23)
 
 
 class ElectricitySchedule:
@@ -64,7 +70,9 @@ class ElectricitySchedule:
 
     async def _run_daily_reading_collection(self) -> None:
         while True:
-            await self._sleep_until(self._next_daily(time(11)))
+            await self._sleep_until(
+                self._next_daily(FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT)
+            )
             try:
                 result = await self.service.collect_room_readings(force=True)
                 logger.info("Daily electricity collection finished: %s", result)
@@ -72,7 +80,7 @@ class ElectricitySchedule:
                 logger.exception("Scheduled electricity reading collection failed")
 
     async def _retry_failed_daily_collection(self) -> None:
-        """Retry an unavailable finance platform during normal daytime hours."""
+        """Retry unavailable readings after the 05:30 maintenance window."""
         while True:
             await self._sleep_until(self._next_collection_retry())
             try:
@@ -105,8 +113,12 @@ class ElectricitySchedule:
 
     def _next_collection_retry(self) -> datetime:
         now = datetime.now(self.timezone)
-        first_retry = datetime.combine(now.date(), time(11, 30), tzinfo=self.timezone)
-        last_retry = datetime.combine(now.date(), time(23), tzinfo=self.timezone)
+        first_retry = datetime.combine(
+            now.date(), FIRST_DAILY_COLLECTION_RETRY_AT, tzinfo=self.timezone
+        )
+        last_retry = datetime.combine(
+            now.date(), LAST_DAILY_COLLECTION_RETRY_AT, tzinfo=self.timezone
+        )
         if now < first_retry:
             return first_retry
         if now >= last_retry:

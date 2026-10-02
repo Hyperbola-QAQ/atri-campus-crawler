@@ -659,6 +659,42 @@ async def test_forced_collection_bypasses_the_daily_cache(tmp_path):
     }
 
 
+def test_daily_collection_status_reports_completion_for_todays_full_pass(tmp_path):
+    service = ElectricityService(
+        "https://payment.example", ElectricityAccountPool(tmp_path / "accounts.json")
+    )
+    service.collection_state_path = tmp_path / "collection-state.json"
+    service.collection_state_path.write_text(
+        json.dumps(
+            {
+                "date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
+                "next_index": 2,
+                "total": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert service.daily_collection_status() == {
+        "collection_date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
+        "total": 3,
+        "queried": 2,
+        "completed": False,
+    }
+
+    service.collection_state_path.write_text(
+        json.dumps(
+            {
+                "date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
+                "next_index": 3,
+                "total": 3,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert service.daily_collection_status()["completed"] is True
+
+
 @pytest.mark.asyncio
 async def test_retry_collection_queries_only_rooms_missing_from_daily_cache(tmp_path):
     catalog_path = tmp_path / "rooms.json"

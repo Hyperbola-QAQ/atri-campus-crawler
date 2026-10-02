@@ -194,6 +194,29 @@ async def test_electricity_room_catalog_endpoint_returns_saved_catalog(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_electricity_collection_status_endpoint_returns_daily_progress():
+    service = Mock()
+    service.daily_collection_status.return_value = {
+        "collection_date": "2026-10-02",
+        "total": 120,
+        "queried": 120,
+        "completed": True,
+    }
+    override_electricity_service(service)
+
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/v1/electricity/collection-status")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == service.daily_collection_status.return_value
+
+
+@pytest.mark.asyncio
 async def test_electricity_room_catalog_refresh_endpoint_requires_token(monkeypatch):
     monkeypatch.setenv("CRAWLER_INTERNAL_TOKEN", "test-token")
     service = AsyncMock()
