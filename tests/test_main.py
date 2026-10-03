@@ -273,16 +273,19 @@ async def test_electricity_endpoint_reads_cached_reading_only():
 @pytest.mark.asyncio
 async def test_electricity_endpoint_returns_room_data():
     service = AsyncMock()
-    service.get_cached_room_reading.return_value = (True, {
-        "campus": "hanpu",
-        "room_number": "06417",
-        "name": "6号公寓417房",
-        "meter_number": "meter-1",
-        "remaining_electricity": "193.17kWh",
-        "balance": 119.57,
-        "state": "在线",
-        "category": "ElecRoomYun",
-    })
+    service.get_cached_room_reading.return_value = (
+        True,
+        {
+            "campus": "hanpu",
+            "room_number": "06417",
+            "name": "6号公寓417房",
+            "meter_number": "meter-1",
+            "remaining_electricity": "193.17kWh",
+            "balance": 119.57,
+            "state": "在线",
+            "category": "ElecRoomYun",
+        },
+    )
     override_electricity_service(service)
     try:
         async with httpx.AsyncClient(
@@ -301,7 +304,10 @@ async def test_electricity_endpoint_returns_room_data():
 @pytest.mark.asyncio
 async def test_electricity_endpoint_pads_four_digit_room_number():
     service = AsyncMock()
-    service.get_cached_room_reading.return_value = (True, {"campus": "hanpu", "room_number": "06417"})
+    service.get_cached_room_reading.return_value = (
+        True,
+        {"campus": "hanpu", "room_number": "06417"},
+    )
     override_electricity_service(service)
     try:
         async with httpx.AsyncClient(
@@ -320,7 +326,10 @@ async def test_electricity_endpoint_pads_four_digit_room_number():
 @pytest.mark.parametrize("room_number", ["6-417", "06-417"])
 async def test_electricity_endpoint_normalizes_hyphenated_room_number(room_number):
     service = AsyncMock()
-    service.get_cached_room_reading.return_value = (True, {"campus": "hanpu", "room_number": "06417"})
+    service.get_cached_room_reading.return_value = (
+        True,
+        {"campus": "hanpu", "room_number": "06417"},
+    )
     override_electricity_service(service)
     try:
         async with httpx.AsyncClient(
@@ -571,3 +580,44 @@ async def test_crawl_endpoint_reports_action_failure(
         adapter.get_profile.assert_awaited_once_with(cookies, "student")
     else:
         getattr(adapter, method_name).assert_awaited_once_with(cookies, "student", "")
+
+
+@pytest.mark.asyncio
+async def test_all_electricity_routes_reject_unsupported_school():
+    # Explicit route validation must remain effective with test overrides.
+    override_electricity_service(Mock())
+    override_electricity_account_pool(Mock())
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            for method, path, payload in [
+                ("GET", "/rooms", None),
+                ("POST", "/rooms/refresh", None),
+                ("GET", "/collection-status", None),
+                ("GET", "/hanpu/06417", None),
+                ("GET", "/accounts", None),
+                ("POST", "/accounts", {"xh": "test", "pwd": "secret"}),
+                ("PUT", "/accounts/test", {"pwd": "secret"}),
+                ("DELETE", "/accounts/test", None),
+            ]:
+                response = await client.request(
+                    method, f"/api/v1/electricity{path}?school=OTHER", json=payload
+                )
+                assert response.status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_electricity_service_is_selected_and_cached_by_school(monkeypatch):
+    service = Mock()
+    factory = Mock()
+    factory.from_environment.return_value = service
+    main._cached_electricity_service.cache_clear()
+    monkeypatch.setitem(main.ELECTRICITY_SERVICES, "HNUCM", factory)
+    try:
+        assert main._cached_electricity_service("HNUCM") is service
+        assert main._cached_electricity_service("HNUCM") is service
+        factory.from_environment.assert_called_once_with()
+    finally:
+        main._cached_electricity_service.cache_clear()

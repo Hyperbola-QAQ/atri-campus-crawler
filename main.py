@@ -40,6 +40,7 @@ from services.electricity import (
 from services.electricity_schedule import ElectricitySchedule
 
 SCHOOL_ADAPTERS = {"HNUCM": HNUCMAdapter}
+ELECTRICITY_SERVICES = {"HNUCM": ElectricityService}
 logger = logging.getLogger(__name__)
 
 
@@ -63,19 +64,21 @@ class CrawlResponse(BaseModel):
     error: str | None = None
 
 
-@lru_cache(maxsize=1)
-def _cached_electricity_service() -> ElectricityService:
+@lru_cache(maxsize=len(ELECTRICITY_SERVICES))
+def _cached_electricity_service(school: str = "HNUCM") -> ElectricityService:
     """复用轮转器；账号文件在每次查询时读取且不会记录到日志。"""
-    return ElectricityService.from_environment()
+    return ELECTRICITY_SERVICES[school].from_environment()
 
 
-async def get_electricity_service() -> ElectricityService:
-    return _cached_electricity_service()
+async def get_electricity_service(
+    school: Literal["HNUCM"] = "HNUCM",
+) -> ElectricityService:
+    return _cached_electricity_service(school)
 
 
-async def get_electricity_account_pool():
+async def get_electricity_account_pool(school: Literal["HNUCM"] = "HNUCM"):
     """Expose the pool storage independently from the query orchestration service."""
-    return (await get_electricity_service()).account_pool
+    return (await get_electricity_service(school)).account_pool
 
 
 @lru_cache(maxsize=1)
@@ -147,7 +150,9 @@ async def require_internal_token(request: Request, call_next):
         token = os.getenv("CRAWLER_INTERNAL_TOKEN")
         supplied = request.headers.get("Authorization", "")
         if not token:
-            return Response(status_code=503, content="crawler internal token is not configured")
+            return Response(
+                status_code=503, content="crawler internal token is not configured"
+            )
         if not secrets.compare_digest(supplied, f"Bearer {token}"):
             return Response(status_code=401, content="invalid internal credentials")
     return await call_next(request)
@@ -165,6 +170,7 @@ async def health() -> dict[str, str]:
 )
 async def list_electricity_accounts(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> ElectricityAccountListResponse:
     """List account IDs. Passwords are never included in responses."""
     try:
@@ -185,6 +191,7 @@ async def list_electricity_accounts(
 async def create_electricity_account(
     request: ElectricityAccountCreate,
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> ElectricityAccountResponse:
     try:
         await account_pool.add_account(request.xh, request.pwd)
@@ -204,6 +211,7 @@ async def update_electricity_account(
     username: str,
     request: ElectricityAccountUpdate,
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> ElectricityAccountResponse:
     if request.xh is None and request.pwd is None:
         raise HTTPException(status_code=422, detail="至少提供 xh 或 pwd 之一")
@@ -228,6 +236,7 @@ async def update_electricity_account(
 async def delete_electricity_account(
     username: str,
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> Response:
     try:
         await account_pool.delete_account(username)
@@ -323,6 +332,7 @@ async def delete_academic_account(
 )
 async def get_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> dict[str, Any]:
     """Return the most recent startup-discovered room catalog for all campuses."""
     catalog = service.get_room_catalog()
@@ -337,6 +347,7 @@ async def get_electricity_rooms(
 )
 async def refresh_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> dict[str, Any]:
     """Immediately re-enumerate valid dorm rooms for every available campus."""
     try:
@@ -354,6 +365,7 @@ async def refresh_electricity_rooms(
 )
 async def get_electricity_collection_status(
     service: ElectricityService = Depends(get_electricity_service),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> ElectricityCollectionStatusResponse:
     """Report whether today's scheduled all-room query has finished."""
     return ElectricityCollectionStatusResponse(**service.daily_collection_status())
@@ -372,6 +384,7 @@ async def get_electricity(
         pattern=r"^(?:\d{4,5}|\d{1,2}-\d{3})$",
     ),
     service: ElectricityService = Depends(get_electricity_service),
+    school: Literal["HNUCM"] = "HNUCM",
 ) -> ElectricityResponse:
     """从每日缓存读取电表信息，绝不在请求期间访问财务平台。"""
     room_number = room_number.replace("-", "")

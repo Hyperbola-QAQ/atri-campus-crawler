@@ -240,3 +240,8 @@ uv run pytest tests/test_electricity_live_api.py -v
 
 编辑器可将 `ty server` 配置为 Python 语言服务器；项目 Python 版本在 `pyproject.toml`
 中声明为 3.10 及以上。
+
+电费相关接口（寝室读数、目录、目录刷新、采集状态、账号池管理）均支持
+`school=HNUCM` 查询参数，与教务接口使用相同的学校代码。目前仅支持 `HNUCM`，
+未支持的学校返回 422；旧请求省略时默认 HNUCM。服务实例按学校缓存并通过
+`ELECTRICITY_SERVICES` 注册表选择，账号池也从对应学校的服务实例获取。
