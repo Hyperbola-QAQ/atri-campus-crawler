@@ -127,7 +127,9 @@ async def test_portal_login_room_query_and_cookie_session_reuse():
                 "room": [
                     {
                         "label": f"{option['roomid'][-3:] if option['roomid'] != '-1' else '417'}房",
-                        "value": "room-417" if option["levelid"] == "level-4" else "room-418",
+                        "value": "room-417"
+                        if option["levelid"] == "level-4"
+                        else "room-418",
                     }
                 ],
             }
@@ -166,7 +168,7 @@ async def test_portal_login_room_query_and_cookie_session_reuse():
                                 "State": "在线",
                                 "Category": "ElecRoomYun",
                             },
-                        }
+                        },
                     }
                 },
             )
@@ -232,11 +234,15 @@ async def test_portal_discovers_rooms_for_every_area():
                     {"label": "含浦学生宿舍", "value": "campus-hanpu"},
                     {"label": "东塘学生宿舍", "value": "campus-dongtang"},
                 ],
-                "build": [{"label": "6号公寓", "value": f"building-{option['areaid']}"}],
+                "build": [
+                    {"label": "6号公寓", "value": f"building-{option['areaid']}"}
+                ],
                 "level": [{"label": "6栋4层", "value": f"level-{option['buildid']}"}],
                 "room": [{"label": "417房", "value": f"room-{option['levelid']}"}],
             }
-            return httpx.Response(200, json={"IsSuccess": True, "Content": choices[key]})
+            return httpx.Response(
+                200, json={"IsSuccess": True, "Content": choices[key]}
+            )
         raise AssertionError(f"Unexpected request path: {request.url.path}")
 
     client = HNUCMElectricityClient(
@@ -486,7 +492,9 @@ async def test_daily_reading_cache_avoids_repeating_platform_request(tmp_path):
         reading_cache=DailyElectricityCache(redis_client=FakeRedis()),
     )
 
-    assert await service.query("06417", "hanpu") == await service.query("06417", "hanpu")
+    assert await service.query("06417", "hanpu") == await service.query(
+        "06417", "hanpu"
+    )
     assert calls == 1
 
     await service.query_live("06417", "hanpu")
@@ -820,3 +828,60 @@ async def test_daily_reading_cache_falls_back_to_memory_when_redis_fails():
 
     assert cached_value == value
     assert cached_value is not value
+
+
+@pytest.mark.parametrize(
+    "building,room,expected",
+    [
+        ("东塘8号公寓", "417房", "08417"),
+        ("6号公寓", "417房", "06417"),
+        ("东塘国教7栋", "101房", None),
+        ("东塘7号公寓", "104A房", None),
+        ("请选择", "101房", None),
+    ],
+)
+def test_room_labels_include_dongtang_without_ambiguous_buildings(
+    building, room, expected
+):
+    assert HNUCMElectricityClient._room_number_from_options(building, room) == expected
+
+
+@pytest.mark.parametrize("label", ["4楼", "4层", "6栋4层"])
+def test_floor_matches_both_campus_formats(label):
+    assert HNUCMElectricityClient._level_option_matches({"label": label}, "4")
+    assert not HNUCMElectricityClient._level_option_matches({"label": "14楼"}, "4")
+
+
+def test_existing_catalog_normalizes_dongtang_labels(tmp_path):
+    path = tmp_path / "rooms.json"
+    path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": "east",
+                        "campus_name": "东塘学生宿舍",
+                        "building": "东塘8号公寓",
+                        "level": "4楼",
+                        "room": "417房",
+                    },
+                    {
+                        "campus": "east",
+                        "campus_name": "东塘学生宿舍",
+                        "building": "东塘国教7栋",
+                        "level": "1楼",
+                        "room": "101房",
+                        "room_number": "07101",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = ElectricityService(
+        "https://payment.example", ElectricityAccountPool(tmp_path / "accounts.json")
+    )
+    service.catalog_path = path
+    rooms = service.get_room_catalog()["rooms"]
+    assert rooms[0]["room_number"] == "08417"
+    assert "room_number" not in rooms[1]

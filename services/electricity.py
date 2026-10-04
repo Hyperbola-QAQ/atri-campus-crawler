@@ -407,6 +407,14 @@ class ElectricityService:
             and "宿舍" in room["campus_name"]
             and "商户" not in room["campus_name"]
         ]
+        for room in rooms:
+            number = HNUCMElectricityClient._room_number_from_options(
+                str(room.get("building", "")), str(room.get("room", ""))
+            )
+            if number is not None:
+                room["room_number"] = number
+            elif "国教" in str(room.get("building", "")):
+                room.pop("room_number", None)
         return {**catalog, "rooms": rooms}
 
     async def get_cached_room_reading(

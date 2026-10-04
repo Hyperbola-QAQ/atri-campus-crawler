@@ -265,7 +265,9 @@ class HNUCMElectricityClient:
     @staticmethod
     def _room_number_from_options(building: str, room: str) -> str | None:
         """Convert selector labels such as ``6号公寓`` / ``417房`` to ``06417``."""
-        building_match = re.match(r"\s*(\d+)", building)
+        building_match = re.fullmatch(
+            r"\s*(?:东塘)?(\d+)(?:号公寓|栋|号楼)\s*", building
+        )
         room_match = re.fullmatch(r"\s*(\d{3})房\s*", room)
         if building_match is None or room_match is None:
             return None
@@ -424,13 +426,17 @@ class HNUCMElectricityClient:
         label = option.get("label")
         if not isinstance(label, str):
             return False
-        match = re.match(r"(\d+)", label)
+        match = re.fullmatch(r"\s*(?:东塘)?(\d+)(?:号公寓|栋|号楼)\s*", label)
         return match is not None and int(match.group(1)) == number
 
     @staticmethod
     def _level_option_matches(option: dict[str, Any], level_number: str) -> bool:
         label = option.get("label")
-        return isinstance(label, str) and label.endswith(f"{level_number}层")
+        return (
+            isinstance(label, str)
+            and re.search(rf"(?:^|\D){re.escape(level_number)}[层楼]$", label.strip())
+            is not None
+        )
 
     async def _get_room_options(
         self,
