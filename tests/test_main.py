@@ -47,6 +47,7 @@ def override_academic_account_pool(pool):
         return pool
 
     app.dependency_overrides[get_academic_account_pool] = override
+    app.dependency_overrides[main.get_crawl_academic_account_pool] = override
 
 
 @pytest.mark.asyncio
@@ -62,26 +63,32 @@ async def test_electricity_account_pool_crud_endpoint_hides_password(tmp_path):
         ) as client:
             response = await client.get("/api/v1/electricity/accounts")
             assert response.status_code == 200
-            assert response.json() == {"accounts": [{"xh": "existing"}]}
+            assert response.json() == {
+                "school": "HNUCM",
+                "accounts": [{"school": "HNUCM", "xh": "existing"}],
+            }
 
             response = await client.post(
                 "/api/v1/electricity/accounts", json={"xh": "new", "pwd": "new-secret"}
             )
             assert response.status_code == 201
-            assert response.json() == {"xh": "new"}
+            assert response.json() == {"school": "HNUCM", "xh": "new"}
 
             response = await client.put(
                 "/api/v1/electricity/accounts/new",
                 json={"xh": "renamed", "pwd": "changed"},
             )
             assert response.status_code == 200
-            assert response.json() == {"xh": "renamed"}
+            assert response.json() == {"school": "HNUCM", "xh": "renamed"}
 
             response = await client.delete("/api/v1/electricity/accounts/renamed")
             assert response.status_code == 204
 
             response = await client.get("/api/v1/electricity/accounts")
-            assert response.json() == {"accounts": [{"xh": "existing"}]}
+            assert response.json() == {
+                "school": "HNUCM",
+                "accounts": [{"school": "HNUCM", "xh": "existing"}],
+            }
     finally:
         app.dependency_overrides.clear()
 
@@ -98,10 +105,13 @@ async def test_academic_account_pool_crud_endpoint_is_separate(tmp_path):
                 "/api/v1/academic/accounts", json={"xh": "academic", "pwd": "secret"}
             )
             assert response.status_code == 201
-            assert response.json() == {"xh": "academic"}
+            assert response.json() == {"school": "HNUCM", "xh": "academic"}
 
             response = await client.get("/api/v1/academic/accounts")
-            assert response.json() == {"accounts": [{"xh": "academic"}]}
+            assert response.json() == {
+                "school": "HNUCM",
+                "accounts": [{"school": "HNUCM", "xh": "academic"}],
+            }
 
             response = await client.delete("/api/v1/academic/accounts/academic")
             assert response.status_code == 204
@@ -213,7 +223,10 @@ async def test_electricity_collection_status_endpoint_returns_daily_progress():
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == service.daily_collection_status.return_value
+    assert response.json() == {
+        "school": "HNUCM",
+        **service.daily_collection_status.return_value,
+    }
 
 
 @pytest.mark.asyncio
@@ -417,6 +430,7 @@ async def test_crawl_endpoint_keeps_login_operation(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == {
+        "school": "HNUCM",
         "status": "success",
         "data": {"success": True},
         "error": None,
@@ -575,7 +589,12 @@ async def test_crawl_endpoint_reports_action_failure(
         )
 
     assert response.status_code == 200
-    assert response.json() == {"status": "failed", "data": None, "error": result[1]}
+    assert response.json() == {
+        "school": "HNUCM",
+        "status": "failed",
+        "data": None,
+        "error": result[1],
+    }
     if action == "get_profile":
         adapter.get_profile.assert_awaited_once_with(cookies, "student")
     else:
@@ -618,7 +637,7 @@ def test_electricity_service_is_selected_and_cached_by_school(monkeypatch):
     try:
         assert main._cached_electricity_service("HNUCM") is service
         assert main._cached_electricity_service("HNUCM") is service
-        factory.from_environment.assert_called_once_with()
+        factory.from_environment.assert_called_once_with(school="HNUCM")
     finally:
         main._cached_electricity_service.cache_clear()
 

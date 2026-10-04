@@ -38,6 +38,7 @@ from services.electricity import (
     ElectricityService,
 )
 from services.electricity_schedule import ElectricitySchedule
+from schemas.school import School
 
 SCHOOL_ADAPTERS = {"HNUCM": HNUCMAdapter}
 ELECTRICITY_SERVICES = {"HNUCM": ElectricityService}
@@ -45,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 class CrawlRequest(BaseModel):
-    school: Literal["HNUCM"]
+    school: School = "HNUCM"
     action: Literal["login", "get_profile", "get_grades", "get_course_schedule"]
     username: str | None = Field(default=None, min_length=1)
     password: str | None = Field(default=None, min_length=1)
@@ -65,39 +66,44 @@ class CrawlRequest(BaseModel):
 
 
 class CrawlResponse(BaseModel):
+    school: School = "HNUCM"
     status: Literal["success", "failed"]
     data: Any = None
     error: str | None = None
 
 
-@lru_cache(maxsize=len(ELECTRICITY_SERVICES))
+@lru_cache(maxsize=None)
 def _cached_electricity_service(school: str = "HNUCM") -> ElectricityService:
     """复用轮转器；账号文件在每次查询时读取且不会记录到日志。"""
-    return ELECTRICITY_SERVICES[school].from_environment()
+    return ELECTRICITY_SERVICES[school].from_environment(school=school)
 
 
 async def get_electricity_service(
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> ElectricityService:
     return _cached_electricity_service(school)
 
 
-async def get_electricity_account_pool(school: Literal["HNUCM"] = "HNUCM"):
+async def get_electricity_account_pool(school: School = "HNUCM"):
     """Expose the pool storage independently from the query orchestration service."""
     return (await get_electricity_service(school)).account_pool
 
 
-@lru_cache(maxsize=1)
-def _cached_academic_account_pool() -> AcademicAccountPool:
+@lru_cache(maxsize=None)
+def _cached_academic_account_pool(school: str = "HNUCM") -> AcademicAccountPool:
     default_accounts_file = (
         FilePath(__file__).resolve().parent / "config" / "academic_accounts.json"
     )
     accounts_file = os.getenv("ACADEMIC_ACCOUNTS_FILE", str(default_accounts_file))
-    return AcademicAccountPool(accounts_file)
+    return AcademicAccountPool(accounts_file, school=school)
 
 
-async def get_academic_account_pool() -> AcademicAccountPool:
-    return _cached_academic_account_pool()
+async def get_academic_account_pool(school: School = "HNUCM") -> AcademicAccountPool:
+    return _cached_academic_account_pool(school)
+
+
+async def get_crawl_academic_account_pool(request: CrawlRequest) -> AcademicAccountPool:
+    return _cached_academic_account_pool(request.school)
 
 
 async def _initial_electricity_sync() -> None:
@@ -176,13 +182,17 @@ async def health() -> dict[str, str]:
 )
 async def list_electricity_accounts(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> ElectricityAccountListResponse:
     """List account IDs. Passwords are never included in responses."""
     try:
         accounts = await account_pool.list_accounts()
         return ElectricityAccountListResponse(
-            accounts=[ElectricityAccountResponse(xh=username) for username in accounts]
+            school=school,
+            accounts=[
+                ElectricityAccountResponse(school=school, xh=username)
+                for username in accounts
+            ],
         )
     except AccountPoolConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -197,11 +207,15 @@ async def list_electricity_accounts(
 async def create_electricity_account(
     request: ElectricityAccountCreate,
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> ElectricityAccountResponse:
+    if request.school is not None and request.school != school:
+        raise HTTPException(
+            status_code=422, detail="请求体 school 与查询参数 school 不一致"
+        )
     try:
         await account_pool.add_account(request.xh, request.pwd)
-        return ElectricityAccountResponse(xh=request.xh)
+        return ElectricityAccountResponse(school=school, xh=request.xh)
     except AccountAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AccountPoolConfigurationError as exc:
@@ -217,15 +231,19 @@ async def update_electricity_account(
     username: str,
     request: ElectricityAccountUpdate,
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> ElectricityAccountResponse:
     if request.xh is None and request.pwd is None:
         raise HTTPException(status_code=422, detail="至少提供 xh 或 pwd 之一")
+    if request.school is not None and request.school != school:
+        raise HTTPException(
+            status_code=422, detail="请求体 school 与查询参数 school 不一致"
+        )
     try:
         updated_username = await account_pool.update_account(
             username, new_username=request.xh, password=request.pwd
         )
-        return ElectricityAccountResponse(xh=updated_username)
+        return ElectricityAccountResponse(school=school, xh=updated_username)
     except AccountNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AccountAlreadyExistsError as exc:
@@ -242,7 +260,7 @@ async def update_electricity_account(
 async def delete_electricity_account(
     username: str,
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> Response:
     try:
         await account_pool.delete_account(username)
@@ -260,11 +278,16 @@ async def delete_electricity_account(
 )
 async def list_academic_accounts(
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
+    school: School = "HNUCM",
 ) -> AcademicAccountListResponse:
     try:
         accounts = await account_pool.list_accounts()
         return AcademicAccountListResponse(
-            accounts=[AcademicAccountResponse(xh=username) for username in accounts]
+            school=school,
+            accounts=[
+                AcademicAccountResponse(school=school, xh=username)
+                for username in accounts
+            ],
         )
     except AccountPoolConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -279,10 +302,15 @@ async def list_academic_accounts(
 async def create_academic_account(
     request: AcademicAccountCreate,
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
+    school: School = "HNUCM",
 ) -> AcademicAccountResponse:
+    if request.school is not None and request.school != school:
+        raise HTTPException(
+            status_code=422, detail="请求体 school 与查询参数 school 不一致"
+        )
     try:
         await account_pool.add_account(request.xh, request.pwd)
-        return AcademicAccountResponse(xh=request.xh)
+        return AcademicAccountResponse(school=school, xh=request.xh)
     except AccountAlreadyExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except AccountPoolConfigurationError as exc:
@@ -298,14 +326,19 @@ async def update_academic_account(
     username: str,
     request: AcademicAccountUpdate,
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
+    school: School = "HNUCM",
 ) -> AcademicAccountResponse:
     if request.xh is None and request.pwd is None:
         raise HTTPException(status_code=422, detail="至少提供 xh 或 pwd 之一")
+    if request.school is not None and request.school != school:
+        raise HTTPException(
+            status_code=422, detail="请求体 school 与查询参数 school 不一致"
+        )
     try:
         updated_username = await account_pool.update_account(
             username, new_username=request.xh, password=request.pwd
         )
-        return AcademicAccountResponse(xh=updated_username)
+        return AcademicAccountResponse(school=school, xh=updated_username)
     except AccountNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AccountAlreadyExistsError as exc:
@@ -322,6 +355,7 @@ async def update_academic_account(
 async def delete_academic_account(
     username: str,
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
+    school: School = "HNUCM",
 ) -> Response:
     try:
         await account_pool.delete_account(username)
@@ -338,13 +372,13 @@ async def delete_academic_account(
 )
 async def get_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> dict[str, Any]:
     """Return the most recent startup-discovered room catalog for all campuses."""
     catalog = service.get_room_catalog()
     if catalog is None:
         raise HTTPException(status_code=503, detail="寝室目录尚未同步完成")
-    return catalog
+    return {**catalog, "school": school}
 
 
 @app.post(
@@ -353,11 +387,11 @@ async def get_electricity_rooms(
 )
 async def refresh_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> dict[str, Any]:
     """Immediately re-enumerate valid dorm rooms for every available campus."""
     try:
-        return await service.refresh_room_catalog()
+        return {**(await service.refresh_room_catalog()), "school": school}
     except AccountPoolConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ElectricityQueryError as exc:
@@ -371,10 +405,12 @@ async def refresh_electricity_rooms(
 )
 async def get_electricity_collection_status(
     service: ElectricityService = Depends(get_electricity_service),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> ElectricityCollectionStatusResponse:
     """Report whether today's scheduled all-room query has finished."""
-    return ElectricityCollectionStatusResponse(**service.daily_collection_status())
+    return ElectricityCollectionStatusResponse(
+        school=school, **service.daily_collection_status()
+    )
 
 
 @app.get(
@@ -390,7 +426,7 @@ async def get_electricity(
         pattern=r"^(?:\d{4,5}|\d{1,2}-\d{3})$",
     ),
     service: ElectricityService = Depends(get_electricity_service),
-    school: Literal["HNUCM"] = "HNUCM",
+    school: School = "HNUCM",
 ) -> ElectricityResponse:
     """从每日缓存读取电表信息，绝不在请求期间访问财务平台。"""
     room_number = room_number.replace("-", "")
@@ -403,7 +439,7 @@ async def get_electricity(
         raise HTTPException(status_code=404, detail="校区或寝室号码不存在")
     if result is None:
         raise HTTPException(status_code=503, detail="该寝室今日电费尚未采集完成")
-    return ElectricityResponse(**result)
+    return ElectricityResponse(**{**result, "school": school})
 
 
 async def _crawl_with_credentials(
@@ -415,9 +451,13 @@ async def _crawl_with_credentials(
 
     success, message, cookies = await adapter.login(username, password)
     if not success:
-        return CrawlResponse(status="failed", error=message), False
+        return CrawlResponse(
+            school=request.school, status="failed", error=message
+        ), False
     if request.action == "login":
-        return CrawlResponse(status="success", data={"success": True}), True
+        return CrawlResponse(
+            school=request.school, status="success", data={"success": True}
+        ), True
 
     if request.action == "get_profile":
         success, message, data = await adapter.get_profile(cookies, username)
@@ -431,7 +471,9 @@ async def _crawl_with_credentials(
         )
 
     if not success or data is None:
-        return CrawlResponse(status="failed", error=message), True
+        return CrawlResponse(
+            school=request.school, status="failed", error=message
+        ), True
 
     if isinstance(data, list):
         serialized = [
@@ -439,13 +481,13 @@ async def _crawl_with_credentials(
         ]
     else:
         serialized = data.model_dump() if hasattr(data, "model_dump") else data
-    return CrawlResponse(status="success", data=serialized), True
+    return CrawlResponse(school=request.school, status="success", data=serialized), True
 
 
 @app.post("/api/v1/academic", response_model=CrawlResponse, tags=["academic"])
 async def crawl(
     request: CrawlRequest,
-    account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
+    account_pool: AcademicAccountPool = Depends(get_crawl_academic_account_pool),
 ) -> CrawlResponse:
     """提供教务查询；省略账号密码时使用独立的教务账号池。"""
     if request.username is not None:
@@ -472,7 +514,9 @@ async def crawl(
         )
         if login_succeeded:
             return result
-    return CrawlResponse(status="failed", error="教务账号池中没有可登录账号")
+    return CrawlResponse(
+        school=request.school, status="failed", error="教务账号池中没有可登录账号"
+    )
 
 
 def main() -> None:

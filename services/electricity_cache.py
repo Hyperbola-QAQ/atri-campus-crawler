@@ -28,10 +28,12 @@ class DailyElectricityCache:
     def __init__(
         self,
         *,
+        school: str = "HNUCM",
         redis_client: AsyncKeyValueStore | None = None,
         key_prefix: str | None = None,
         timezone_name: str | None = None,
     ):
+        self.school = school
         self._redis_client = redis_client
         self._key_prefix = key_prefix or os.getenv(
             "ELECTRICITY_CACHE_KEY_PREFIX", "electricity:daily"
@@ -50,8 +52,8 @@ class DailyElectricityCache:
         self._redis_retry_at = 0.0
 
     @classmethod
-    def from_environment(cls) -> "DailyElectricityCache":
-        return cls()
+    def from_environment(cls, school: str = "HNUCM") -> "DailyElectricityCache":
+        return cls(school=school)
 
     def _day_and_expiry(self, now: datetime | None = None) -> tuple[str, datetime, int]:
         current = now or datetime.now(self._timezone)
@@ -62,7 +64,7 @@ class DailyElectricityCache:
         return current.date().isoformat(), next_midnight, ttl_seconds
 
     def _key(self, campus: str, room_number: str, day: str) -> str:
-        return f"{self._key_prefix}:{day}:{campus}:{room_number}"
+        return f"{self._key_prefix}:{self.school}:{day}:{campus}:{room_number}"
 
     async def _client(self) -> AsyncKeyValueStore:
         if self._redis_client is None:
@@ -104,10 +106,14 @@ class DailyElectricityCache:
                     result = json.loads(raw_value)
                     if isinstance(result, dict):
                         return result
-                    logger.warning("Ignoring invalid electricity cache value from Redis")
+                    logger.warning(
+                        "Ignoring invalid electricity cache value from Redis"
+                    )
             except (RedisError, OSError, ValueError, TypeError):
                 self._mark_redis_unavailable()
-                logger.warning("Redis unavailable; using process-local electricity cache")
+                logger.warning(
+                    "Redis unavailable; using process-local electricity cache"
+                )
         return await self._memory_get(key)
 
     async def set(self, campus: str, room_number: str, result: dict[str, Any]) -> None:
@@ -120,5 +126,7 @@ class DailyElectricityCache:
                 )
             except (RedisError, OSError, ValueError, TypeError):
                 self._mark_redis_unavailable()
-                logger.warning("Redis unavailable; storing electricity cache in this process")
+                logger.warning(
+                    "Redis unavailable; storing electricity cache in this process"
+                )
         await self._memory_set(key, result, expires_at)

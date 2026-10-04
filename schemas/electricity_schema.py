@@ -2,8 +2,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from schemas.school import School
+
 
 class ElectricityResponse(BaseModel):
+    school: School = "HNUCM"
     campus: str
     room_number: str
     name: str | None = None
@@ -17,6 +20,7 @@ class ElectricityResponse(BaseModel):
 class ElectricityCollectionStatusResponse(BaseModel):
     """Progress of crawler's current daily all-room electricity collection."""
 
+    school: School = "HNUCM"
     collection_date: str
     total: int = Field(ge=0)
     queried: int = Field(ge=0)
@@ -26,14 +30,17 @@ class ElectricityCollectionStatusResponse(BaseModel):
 class ElectricityAccountResponse(BaseModel):
     """Public account representation. Passwords are intentionally omitted."""
 
+    school: School = "HNUCM"
     xh: str
 
 
 class ElectricityAccountListResponse(BaseModel):
+    school: School = "HNUCM"
     accounts: list[ElectricityAccountResponse]
 
 
 class ElectricityAccountCreate(BaseModel):
+    school: School | None = None
     xh: str = Field(min_length=1, max_length=128)
     pwd: str = Field(min_length=1, max_length=512)
 
@@ -47,6 +54,7 @@ class ElectricityAccountCreate(BaseModel):
 
 
 class ElectricityAccountUpdate(BaseModel):
+    school: School | None = None
     xh: str | None = Field(default=None, min_length=1, max_length=128)
     pwd: str | None = Field(default=None, min_length=1, max_length=512)
 
@@ -66,6 +74,7 @@ class AcademicAccountResponse(ElectricityAccountResponse):
 
 
 class AcademicAccountListResponse(BaseModel):
+    school: School = "HNUCM"
     accounts: list[AcademicAccountResponse]
 
 

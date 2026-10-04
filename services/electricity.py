@@ -5,10 +5,11 @@ import hashlib
 import json
 import os
 import random
+import re
 from datetime import datetime, time, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 from zoneinfo import ZoneInfo
 
 from adapter.hnucm_adapter.electricity import (
@@ -39,28 +40,43 @@ class AccountAlreadyExistsError(RuntimeError):
 class ElectricityAccount:
     username: str = field(repr=False)
     password: str = field(repr=False)
+    school: str = "HNUCM"
 
     @property
     def cache_key(self) -> str:
         """Return a non-reversible cache key without retaining credentials in it."""
-        identity = f"{self.username}\0{self.password}".encode("utf-8")
+        identity = f"{self.school}\0{self.username}\0{self.password}".encode("utf-8")
         return hashlib.sha256(identity).hexdigest()
 
 
 class ElectricityAccountPool:
     """Read an internal JSON account list and rotate account order."""
 
-    def __init__(self, path: str | Path, *, pool_name: str = "电费"):
+    _file_locks: ClassVar[dict[str, asyncio.Lock]] = {}
+
+    def __init__(
+        self, path: str | Path, *, pool_name: str = "电费", school: str = "HNUCM"
+    ):
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}", school):
+            raise ValueError("学校代码格式无效")
+        self.school = school
         self.path = Path(path).expanduser()
         self.pool_name = pool_name
         self._next_index = 0
-        self._lock = asyncio.Lock()
+        self._lock = self._file_locks.setdefault(
+            str(self.path.resolve()), asyncio.Lock()
+        )
 
     def _read_accounts(self) -> list[ElectricityAccount]:
-        records = self._read_records()
+        records = [
+            record for record in self._read_records() if record["school"] == self.school
+        ]
         if not records:
             raise AccountPoolConfigurationError(f"{self.pool_name}账号池中没有可用账号")
-        return [ElectricityAccount(record["xh"], record["pwd"]) for record in records]
+        return [
+            ElectricityAccount(record["xh"], record["pwd"], record["school"])
+            for record in records
+        ]
 
     def _read_records(self, *, allow_missing: bool = False) -> list[dict[str, str]]:
         if not self.path.is_file():
@@ -93,7 +109,16 @@ class ElectricityAccountPool:
                 raise AccountPoolConfigurationError(
                     "账号池中的每个账号必须包含非空 xh 和 pwd 字段"
                 )
-            validated_records.append({"xh": record["xh"].strip(), "pwd": record["pwd"]})
+            school = record.get("school", "HNUCM")
+            if not isinstance(school, str) or not re.fullmatch(
+                r"[A-Z][A-Z0-9_]{0,31}", school
+            ):
+                raise AccountPoolConfigurationError(
+                    "账号池中的 school 必须为有效学校代码"
+                )
+            validated_records.append(
+                {"school": school, "xh": record["xh"].strip(), "pwd": record["pwd"]}
+            )
         return validated_records
 
     def _write_records(self, records: list[dict[str, str]]) -> None:
@@ -114,14 +139,21 @@ class ElectricityAccountPool:
     async def list_accounts(self) -> list[str]:
         """Return account identifiers only; passwords must never leave this layer."""
         async with self._lock:
-            return [record["xh"] for record in self._read_records()]
+            return [
+                record["xh"]
+                for record in self._read_records()
+                if record["school"] == self.school
+            ]
 
     async def add_account(self, username: str, password: str) -> None:
         async with self._lock:
             records = self._read_records(allow_missing=True)
-            if any(record["xh"] == username for record in records):
+            if any(
+                record["school"] == self.school and record["xh"] == username
+                for record in records
+            ):
                 raise AccountAlreadyExistsError("账号已存在")
-            records.append({"xh": username, "pwd": password})
+            records.append({"school": self.school, "xh": username, "pwd": password})
             self._write_records(records)
 
     async def update_account(
@@ -133,14 +165,17 @@ class ElectricityAccountPool:
                 (
                     index
                     for index, record in enumerate(records)
-                    if record["xh"] == username
+                    if record["school"] == self.school and record["xh"] == username
                 ),
                 None,
             )
             if index is None:
                 raise AccountNotFoundError("账号不存在")
             if new_username is not None and new_username != username:
-                if any(record["xh"] == new_username for record in records):
+                if any(
+                    record["school"] == self.school and record["xh"] == new_username
+                    for record in records
+                ):
                     raise AccountAlreadyExistsError("账号已存在")
                 records[index]["xh"] = new_username
             if password is not None:
@@ -151,7 +186,11 @@ class ElectricityAccountPool:
     async def delete_account(self, username: str) -> None:
         async with self._lock:
             records = self._read_records()
-            new_records = [record for record in records if record["xh"] != username]
+            new_records = [
+                record
+                for record in records
+                if record["school"] != self.school or record["xh"] != username
+            ]
             if len(new_records) == len(records):
                 raise AccountNotFoundError("账号不存在")
             self._write_records(new_records)
@@ -167,8 +206,8 @@ class ElectricityAccountPool:
 class AcademicAccountPool(ElectricityAccountPool):
     """A separate rotating credential pool for the academic affairs system."""
 
-    def __init__(self, path: str | Path):
-        super().__init__(path, pool_name="教务")
+    def __init__(self, path: str | Path, *, school: str = "HNUCM"):
+        super().__init__(path, pool_name="教务", school=school)
 
 
 class ElectricityService:
@@ -182,30 +221,43 @@ class ElectricityService:
         cookie_cache: InMemoryCookieCache | None = None,
         reading_cache: DailyElectricityCache | None = None,
     ):
+        self.school = account_pool.school
         self.base_url = base_url
         self.account_pool = account_pool
         self.client_factory = client_factory
         self.cookie_cache = cookie_cache or InMemoryCookieCache()
-        self.reading_cache = reading_cache or DailyElectricityCache.from_environment()
+        self.reading_cache = reading_cache or DailyElectricityCache.from_environment(
+            school=self.school
+        )
         default_catalog_path = (
             Path(__file__).resolve().parent.parent / "config" / "electricity_rooms.json"
         )
         catalog_path = os.getenv(
             "ELECTRICITY_ROOM_CATALOG_FILE", str(default_catalog_path)
         ).strip()
-        self.catalog_path = Path(catalog_path) if catalog_path else None
+        self.catalog_path = self._school_path(catalog_path)
         default_state_path = default_catalog_path.with_name(
             "electricity_collection_state.json"
         )
         state_path = os.getenv(
             "ELECTRICITY_COLLECTION_STATE_FILE", str(default_state_path)
         ).strip()
-        self.collection_state_path = Path(state_path) if state_path else None
+        self.collection_state_path = self._school_path(state_path)
         self._catalog_lock = asyncio.Lock()
         self._collection_lock = asyncio.Lock()
 
+    def _school_path(self, path: str) -> Path | None:
+        if not path:
+            return None
+        value = Path(path)
+        return (
+            value
+            if self.school == "HNUCM"
+            else value.with_name(f"{value.stem}.{self.school}{value.suffix}")
+        )
+
     @classmethod
-    def from_environment(cls) -> "ElectricityService":
+    def from_environment(cls, school: str = "HNUCM") -> "ElectricityService":
         default_accounts_file = (
             Path(__file__).resolve().parent.parent
             / "config"
@@ -216,7 +268,7 @@ class ElectricityService:
         )
         return cls(
             base_url=HNUCMElectricityClient.DEFAULT_BASE_URL,
-            account_pool=ElectricityAccountPool(accounts_file),
+            account_pool=ElectricityAccountPool(accounts_file, school=school),
         )
 
     async def _query_account(
@@ -318,6 +370,7 @@ class ElectricityService:
 
                 await self.cookie_cache.set(account.cache_key, session)
                 catalog = {
+                    "school": self.school,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
                     "rooms": rooms,
                 }
@@ -337,7 +390,11 @@ class ElectricityService:
                 catalog = json.load(catalog_file)
         except (OSError, UnicodeError, json.JSONDecodeError):
             return None
-        if not isinstance(catalog, dict) or not isinstance(catalog.get("rooms"), list):
+        if (
+            not isinstance(catalog, dict)
+            or catalog.get("school", "HNUCM") != self.school
+            or not isinstance(catalog.get("rooms"), list)
+        ):
             return None
         # Catalogs written by older releases can include non-dorm merchant
         # areas.  Filter them at read time too, so an existing cache never
@@ -486,9 +543,7 @@ class ElectricityService:
                 rooms = [
                     room
                     for room in rooms
-                    if await self.reading_cache.get(
-                        room["campus"], room["room_number"]
-                    )
+                    if await self.reading_cache.get(room["campus"], room["room_number"])
                     is None
                 ]
             collection_date = self._collection_date()
@@ -562,16 +617,24 @@ class ElectricityService:
         return datetime.now(ZoneInfo(timezone_name)).date().isoformat()
 
     def _read_collection_state(self) -> dict[str, Any] | None:
-        if self.collection_state_path is None or not self.collection_state_path.is_file():
+        if (
+            self.collection_state_path is None
+            or not self.collection_state_path.is_file()
+        ):
             return None
         try:
             with self.collection_state_path.open("r", encoding="utf-8") as state_file:
                 state = json.load(state_file)
         except (OSError, UnicodeError, json.JSONDecodeError):
             return None
-        return state if isinstance(state, dict) else None
+        return (
+            state
+            if isinstance(state, dict) and state.get("school", "HNUCM") == self.school
+            else None
+        )
 
     def _write_collection_state(self, state: dict[str, Any]) -> None:
+        state = {**state, "school": self.school}
         if self.collection_state_path is None:
             return
         try:
