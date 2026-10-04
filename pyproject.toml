@@ -10,7 +10,7 @@ include = ["adapter*", "schemas*", "services*", "utils*"]
 namespaces = true
 
 [project]
-name = "atri-crawler"
+name = "atri-campus-crawler"
 description = "ATRI爬虫模块 - 更快、更稳、更易维护的爬虫微服务"
 version = "0.1.0"
 authors = [

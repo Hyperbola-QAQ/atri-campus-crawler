@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: crawler-state-importer
-  namespace: atri-university-crawler
+  namespace: atri-campus-crawler
 spec:
   restartPolicy: Never
   automountServiceAccountToken: false

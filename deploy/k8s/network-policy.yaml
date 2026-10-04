@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: university-crawler-ingress
-  namespace: atri-university-crawler
+  namespace: atri-campus-crawler
 spec:
   podSelector:
     matchLabels:
@@ -12,7 +12,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: atri-server
+              kubernetes.io/metadata.name: atri-campus-server
       ports:
         - protocol: TCP
           port: 8000

@@ -36,11 +36,11 @@ echo "创建部署资源与配置"
 "${remote[@]}" kubectl apply -f - < "$repo_root/deploy/k8s/network-policy.yaml"
 "${remote[@]}" python3 - <<'PY'
 import base64, json, secrets, subprocess
-result = subprocess.run(["kubectl", "-n", "atri-university-crawler", "get", "secret", "crawler-runtime-secrets", "-o", "json"], capture_output=True)
+result = subprocess.run(["kubectl", "-n", "atri-campus-crawler", "get", "secret", "crawler-runtime-secrets", "-o", "json"], capture_output=True)
 token = secrets.token_urlsafe(48)
 if result.returncode == 0:
     token = base64.b64decode(json.loads(result.stdout)["data"]["CRAWLER_INTERNAL_TOKEN"]).decode()
-obj = {"apiVersion":"v1", "kind":"Secret", "metadata":{"name":"crawler-runtime-secrets", "namespace":"atri-university-crawler"}, "type":"Opaque", "stringData":{"CRAWLER_INTERNAL_TOKEN":token}}
+obj = {"apiVersion":"v1", "kind":"Secret", "metadata":{"name":"crawler-runtime-secrets", "namespace":"atri-campus-crawler"}, "type":"Opaque", "stringData":{"CRAWLER_INTERNAL_TOKEN":token}}
 subprocess.run(["kubectl", "apply", "-f", "-"], input=json.dumps(obj).encode(), check=True, stdout=subprocess.DEVNULL)
 PY
 
@@ -59,7 +59,7 @@ if not isinstance(accounts, dict) or not isinstance(accounts.get("accounts"), li
     raise SystemExit("电费账号池为空或格式错误")
 print(json.dumps({
     "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-    "metadata": {"name": "crawler-electricity-accounts", "namespace": "atri-university-crawler"},
+    "metadata": {"name": "crawler-electricity-accounts", "namespace": "atri-campus-crawler"},
     "stringData": {"accounts.json": raw_accounts},
 }))
 PY
@@ -75,7 +75,7 @@ source = json.loads(subprocess.check_output([
 password = source["data"]["password"]
 destination = {
     "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-    "metadata": {"name": "crawler-redis-auth", "namespace": "atri-university-crawler"},
+    "metadata": {"name": "crawler-redis-auth", "namespace": "atri-campus-crawler"},
     "data": {"REDIS_PASSWORD": password},
 }
 subprocess.run(["kubectl", "apply", "-f", "-"],
@@ -83,23 +83,23 @@ subprocess.run(["kubectl", "apply", "-f", "-"],
 PY
 
 echo "上传源码版本：$release_id"
-"${remote[@]}" kubectl -n atri-university-crawler delete pod crawler-state-importer --ignore-not-found --wait=true > /dev/null
+"${remote[@]}" kubectl -n atri-campus-crawler delete pod crawler-state-importer --ignore-not-found --wait=true > /dev/null
 "${remote[@]}" kubectl apply -f - < "$repo_root/deploy/k8s/state-importer.yaml"
-"${remote[@]}" kubectl -n atri-university-crawler wait --for=condition=Ready pod/crawler-state-importer --timeout=240s
+"${remote[@]}" kubectl -n atri-campus-crawler wait --for=condition=Ready pod/crawler-state-importer --timeout=240s
 
 release_dir="/var/lib/crawler/releases/$release_id"
-if "${remote[@]}" kubectl -n atri-university-crawler exec crawler-state-importer -- test -f "$release_dir/.ready" 2> /dev/null; then
+if "${remote[@]}" kubectl -n atri-campus-crawler exec crawler-state-importer -- test -f "$release_dir/.ready" 2> /dev/null; then
   echo "版本 $release_id 已存在，请使用新的 RELEASE_ID。" >&2
   exit 2
 fi
-"${remote[@]}" kubectl -n atri-university-crawler exec crawler-state-importer -- mkdir -p "$release_dir"
+"${remote[@]}" kubectl -n atri-campus-crawler exec crawler-state-importer -- mkdir -p "$release_dir"
 tar -czf - -C "$repo_root" main.py pyproject.toml uv.lock README.md LICENSE adapter schemas services utils scripts \
-  | "${remote[@]}" kubectl -n atri-university-crawler exec -i crawler-state-importer -- tar -xzf - -C "$release_dir"
-"${remote[@]}" kubectl -n atri-university-crawler exec crawler-state-importer -- touch "$release_dir/.ready"
-"${remote[@]}" kubectl -n atri-university-crawler delete pod crawler-state-importer --wait=true > /dev/null
+  | "${remote[@]}" kubectl -n atri-campus-crawler exec -i crawler-state-importer -- tar -xzf - -C "$release_dir"
+"${remote[@]}" kubectl -n atri-campus-crawler exec crawler-state-importer -- touch "$release_dir/.ready"
+"${remote[@]}" kubectl -n atri-campus-crawler delete pod crawler-state-importer --wait=true > /dev/null
 
 echo "切换 API 到新版本"
 "${remote[@]}" kubectl apply -f - < "$temporary_dir/crawler.yaml"
-"${remote[@]}" kubectl -n atri-university-crawler rollout status deployment/university-crawler --timeout=600s
-"${remote[@]}" kubectl -n atri-university-crawler get deployment university-crawler -o wide
+"${remote[@]}" kubectl -n atri-campus-crawler rollout status deployment/university-crawler --timeout=600s
+"${remote[@]}" kubectl -n atri-campus-crawler get deployment university-crawler -o wide
 echo "部署完成：$release_id"

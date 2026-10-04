@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: atri-university-crawler
+  name: atri-campus-crawler
   labels:
     monitoring-gateway-access: "true"
 ---
@@ -20,7 +20,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: crawler-state
-  namespace: atri-university-crawler
+  namespace: atri-campus-crawler
 spec:
   accessModes:
     - ReadWriteMany
@@ -33,7 +33,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: crawler-runtime
-  namespace: atri-university-crawler
+  namespace: atri-campus-crawler
 data:
   ENVIRONMENT: prod
   API_HOST: 0.0.0.0

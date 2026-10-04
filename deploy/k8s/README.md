@@ -10,12 +10,12 @@ bash deploy/k8s/deploy.sh
 
 默认 SSH 目标为 `hyperbola@192.168.86.11`，可用 `K8S_SSH_TARGET` 和 `SSH_CONFIG` 调整。集群节点首次运行需要拉取 `ghcr.io/astral-sh/uv:python3.14-trixie-slim` 并访问 PyPI 下载依赖。
 
-部署在 `atri-university-crawler` 命名空间，Service 为 `university-crawler:8000`，集群内访问地址为 `http://university-crawler.atri-university-crawler.svc.cluster.local:8000`。公网电费接口为 `https://university-crawler.hyperbola.cc/api/v1/electricity/...`。`/health` 用于存活和就绪检查。
+部署在 `atri-campus-crawler` 命名空间，Service 为 `university-crawler:8000`，集群内访问地址为 `http://university-crawler.atri-campus-crawler.svc.cluster.local:8000`。公网电费接口为 `https://university-crawler.hyperbola.cc/api/v1/electricity/...`。`/health` 用于存活和就绪检查。
 
 每次部署生成独立源码版本目录并更新 Deployment。回退可运行：
 
 ```bash
-kubectl -n atri-university-crawler rollout undo deployment/university-crawler
+kubectl -n atri-campus-crawler rollout undo deployment/university-crawler
 ```
 
 旧版本保留在 `crawler-state` PVC 中。当前仅运行一个副本，因为电费账号轮转与 Cookie 缓存在进程内。更新时 API 会短暂中断。
