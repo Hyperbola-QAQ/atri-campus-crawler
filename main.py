@@ -70,6 +70,7 @@ class CrawlResponse(BaseModel):
     status: Literal["success", "failed"]
     data: Any = None
     error: str | None = None
+    error_code: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 @lru_cache(maxsize=None)
@@ -452,7 +453,7 @@ async def _crawl_with_credentials(
     success, message, cookies = await adapter.login(username, password)
     if not success:
         return CrawlResponse(
-            school=request.school, status="failed", error=message
+            school=request.school, status="failed", error=message, error_code="ACADEMIC_LOGIN_FAILED"
         ), False
     if request.action == "login":
         return CrawlResponse(

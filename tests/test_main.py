@@ -522,6 +522,7 @@ async def test_crawl_endpoint_reports_login_failure(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
     assert response.json()["error"] == "登录失败"
+    assert response.json()["error_code"] == "ACADEMIC_LOGIN_FAILED"
     adapter.get_profile.assert_not_awaited()
     adapter.get_grades.assert_not_awaited()
     adapter.get_course_schedule.assert_not_awaited()
