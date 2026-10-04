@@ -5,7 +5,7 @@ import httpx
 import xlrd
 from schemas.profile_schema import Profile
 from utils.log import logger
-import aiofiles
+import tempfile
 
 
 class ProfileCrawler:
@@ -34,10 +34,10 @@ class ProfileCrawler:
 
             response.raise_for_status()
 
-            # 保存文件到tmp/目录
-            xls_path = Path(f"tmp/{self.school_name}_{self.username}_profile.xls")
-            async with aiofiles.open(xls_path, "wb") as f:
-                await f.write(response.content)
+            # 使用系统临时目录，兼容源码目录只读且没有 tmp/ 的部署。
+            with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
+                xls_path = Path(f.name)
+                f.write(response.content)
             logger.debug(f"[{self.username}] 个人信息表已保存至 {xls_path}")
 
             return xls_path
@@ -81,7 +81,10 @@ class ProfileCrawler:
 
         try:
             xls_path: Path = await self.fetch_profile_xls(cookies)
-            profile: Dict = await self.parse_profile_xls(xls_path)
+            try:
+                profile: Dict = await self.parse_profile_xls(xls_path)
+            finally:
+                xls_path.unlink(missing_ok=True)
 
             # 转换为 Profile 模型
             return Profile(**profile)

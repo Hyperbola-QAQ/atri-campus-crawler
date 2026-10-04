@@ -7,6 +7,7 @@ from utils.log import logger
 import re
 import datetime
 import xlrd
+import tempfile
 
 
 # 获取当前学期
@@ -246,11 +247,9 @@ class CourseScheduleCrawler:
 
             response.raise_for_status()
 
-            # 保存文件到tmp/目录
-            xls_path = Path(
-                f"tmp/{self.school_name}_{self.username}_course_schedule_{semester}.xls"
-            )
-            with open(xls_path, "wb") as f:
+            # 每次请求独立使用系统临时文件，避免目录缺失及并发覆盖。
+            with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
+                xls_path = Path(f.name)
                 f.write(response.content)
             logger.debug(f"[{self.username}] 课表已保存至 {xls_path}")
 
@@ -333,9 +332,12 @@ class CourseScheduleCrawler:
 
         try:
             xls_path: Path = await self.fetch_course_schedule_xls(semester, cookies)
-            course_list: List[Dict[str, Any]] = await self.parse_course_schedule_xls(
-                xls_path
-            )
+            try:
+                course_list: List[
+                    Dict[str, Any]
+                ] = await self.parse_course_schedule_xls(xls_path)
+            finally:
+                xls_path.unlink(missing_ok=True)
             logger.debug(f"[{self.username}] 解析到 {len(course_list)} 条课程记录")
 
             return [CourseScheduleItem(**course) for course in course_list]
