@@ -621,3 +621,57 @@ def test_electricity_service_is_selected_and_cached_by_school(monkeypatch):
         factory.from_environment.assert_called_once_with()
     finally:
         main._cached_electricity_service.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "student_id,expected_status", [("target", 200), ("missing", 404)]
+)
+async def test_academic_pool_queries_only_target_student(
+    monkeypatch, tmp_path, student_id, expected_status
+):
+    accounts_file = tmp_path / "target-accounts.json"
+    accounts_file.write_text(
+        '{"accounts": [{"xh": "other", "pwd": "other-secret"}, {"xh": "target", "pwd": "target-secret"}]}',
+        encoding="utf-8",
+    )
+    override_academic_account_pool(AcademicAccountPool(accounts_file))
+    adapter = AsyncMock()
+    adapter.login.return_value = (True, "success", object())
+    adapter.get_grades.return_value = (True, "success", [])
+    monkeypatch.setitem(main.SCHOOL_ADAPTERS, "HNUCM", lambda: adapter)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.post(
+                "/api/v1/academic",
+                json={
+                    "school": "HNUCM",
+                    "action": "get_grades",
+                    "params": {"student_id": student_id, "semester": "2025-2026-2"},
+                },
+            )
+        assert response.status_code == expected_status
+        if expected_status == 200:
+            adapter.login.assert_awaited_once_with("target", "target-secret")
+        else:
+            adapter.login.assert_not_awaited()
+    finally:
+        app.dependency_overrides.clear()
+
+
+async def test_academic_rejects_mismatched_subject_credentials():
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/api/v1/academic",
+            json={
+                "school": "HNUCM",
+                "action": "get_grades",
+                "username": "other",
+                "password": "secret",
+                "params": {"student_id": "target"},
+            },
+        )
+    assert response.status_code == 422

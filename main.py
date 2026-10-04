@@ -55,6 +55,12 @@ class CrawlRequest(BaseModel):
     def credentials_must_be_provided_together(self):
         if (self.username is None) != (self.password is None):
             raise ValueError("username 和 password 必须同时提供，或同时省略")
+        student_id = self.params.get("student_id")
+        if student_id is not None:
+            if not isinstance(student_id, str) or not student_id.strip():
+                raise ValueError("params.student_id 必须为非空字符串")
+            if self.username is not None and self.username != student_id:
+                raise ValueError("username 与 params.student_id 必须一致")
         return self
 
 
@@ -453,6 +459,12 @@ async def crawl(
         accounts = await account_pool.rotated_accounts()
     except AccountPoolConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    student_id = request.params.get("student_id")
+    if student_id is not None:
+        accounts = [account for account in accounts if account.username == student_id]
+        if not accounts:
+            raise HTTPException(status_code=404, detail="教务账号池中未找到目标学号")
 
     for account in accounts:
         result, login_succeeded = await _crawl_with_credentials(
