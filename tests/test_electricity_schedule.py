@@ -59,3 +59,22 @@ def test_schedule_retries_collections_only_during_the_daytime_window():
 
     assert retry > datetime.now(ZoneInfo("Asia/Shanghai"))
     assert FIRST_DAILY_COLLECTION_RETRY_AT <= retry.time() < time(23)
+
+
+@pytest.mark.asyncio
+async def test_restart_before_settlement_does_not_resume_daily_scan(monkeypatch):
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    import services.electricity_schedule as module
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(
+                2026, 10, 5, 0, 35, tzinfo=ZoneInfo("Asia/Shanghai")
+            ).astimezone(tz)
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    service = SimpleNamespace(resume_today_collection=AsyncMock())
+    await ElectricitySchedule(service)._resume_interrupted_collection()
+    service.resume_today_collection.assert_not_awaited()

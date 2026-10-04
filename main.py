@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import secrets
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager, suppress
 from functools import lru_cache
 from pathlib import Path as FilePath
@@ -438,6 +440,22 @@ async def get_electricity(
         raise HTTPException(status_code=503, detail="寝室目录尚未同步完成")
     if not catalogued:
         raise HTTPException(status_code=404, detail="校区或寝室号码不存在")
+    if result is not None and result.get("collected_at"):
+        try:
+            collected = datetime.fromisoformat(result["collected_at"])
+            now = datetime.now(ZoneInfo("Asia/Shanghai"))
+            if collected.tzinfo is None:
+                result = None
+            else:
+                collected = collected.astimezone(now.tzinfo)
+                if (
+                    collected.date() != now.date()
+                    or collected.time() < time(5, 30)
+                    or collected > now
+                ):
+                    result = None
+        except (ValueError, TypeError):
+            result = None
     if result is None:
         raise HTTPException(status_code=503, detail="该寝室今日电费尚未采集完成")
     return ElectricityResponse(**{**result, "school": school})

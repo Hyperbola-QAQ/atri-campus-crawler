@@ -317,7 +317,10 @@ async def test_account_pool_rotates_and_retries_without_returning_account_data(
     first_result = await service.query("06417", "hanpu")
     second_result = await service.query("06418", "hanpu")
 
-    assert first_result == {
+    assert first_result["collected_at"]
+    assert {
+        key: value for key, value in first_result.items() if key != "collected_at"
+    } == {
         "campus": "hanpu",
         "room_number": "06417",
         "remaining_electricity": "5kWh",

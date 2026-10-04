@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -13,6 +14,7 @@ class ElectricityResponse(BaseModel):
     meter_number: str | None = None
     remaining_electricity: str | None = None
     balance: Any = None
+    collected_at: datetime | None = None
     state: str | None = None
     category: str | None = None
 

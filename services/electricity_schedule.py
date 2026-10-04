@@ -61,6 +61,11 @@ class ElectricitySchedule:
                 logger.exception("Scheduled electricity room catalog refresh failed")
 
     async def _resume_interrupted_collection(self) -> None:
+        if (
+            datetime.now(self.timezone).time()
+            < FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT
+        ):
+            return
         try:
             result = await self.service.resume_today_collection()
             if result is not None:

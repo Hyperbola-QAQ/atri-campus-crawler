@@ -77,7 +77,7 @@ class DailyElectricityCache:
         return current.date().isoformat(), next_midnight, ttl_seconds
 
     def _key(self, campus: str, room_number: str, day: str) -> str:
-        return f"{self._key_prefix}:{self.school}:{day}:{campus}:{normalize_room_number(room_number)}"
+        return f"{self._key_prefix}:v2:{self.school}:{day}:{campus}:{normalize_room_number(room_number)}"
 
     async def _client(self) -> AsyncKeyValueStore:
         if self._redis_client is None:

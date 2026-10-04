@@ -329,6 +329,7 @@ class ElectricityService:
         for account in accounts:
             try:
                 result = await self._query_account(account, room_number, campus)
+                result["collected_at"] = datetime.now(timezone.utc).isoformat()
                 return result
             except ElectricityPlatformError as exc:
                 platform_error = exc
