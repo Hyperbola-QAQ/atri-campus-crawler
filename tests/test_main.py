@@ -695,3 +695,31 @@ async def test_academic_rejects_mismatched_subject_credentials():
             },
         )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("value", ["guojiao-07101", "国教7-101", "guojiao-7-101"])
+async def test_national_room_api_preserves_building_prefix(value):
+    service = Mock()
+    service.get_cached_room_reading = AsyncMock(
+        return_value=(
+            True,
+            {
+                "campus": "east",
+                "room_number": "guojiao-07101",
+                "balance": 9,
+            },
+        )
+    )
+    override_electricity_service(service)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(f"/api/v1/electricity/east/{value}")
+            assert response.status_code == 200, response.text
+            assert response.json()["room_number"] == "guojiao-07101"
+        service.get_cached_room_reading.assert_awaited_once_with(
+            "guojiao-07101", "east"
+        )
+    finally:
+        app.dependency_overrides.clear()

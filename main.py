@@ -7,6 +7,8 @@ from functools import lru_cache
 from pathlib import Path as FilePath
 from typing import Any, Literal
 
+from utils.electricity_identity import ROOM_INPUT_PATTERN, normalize_room_number
+
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response, status
@@ -423,16 +425,14 @@ async def get_electricity(
     campus: str = Path(min_length=1, max_length=128),
     room_number: str = Path(
         min_length=4,
-        max_length=6,
-        pattern=r"^(?:\d{4,5}|\d{1,2}-\d{3})$",
+        max_length=32,
+        pattern=ROOM_INPUT_PATTERN,
     ),
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> ElectricityResponse:
     """从每日缓存读取电表信息，绝不在请求期间访问财务平台。"""
-    room_number = room_number.replace("-", "")
-    if len(room_number) == 4:
-        room_number = f"0{room_number}"
+    room_number = normalize_room_number(room_number)
     catalogued, result = await service.get_cached_room_reading(room_number, campus)
     if catalogued is None:
         raise HTTPException(status_code=503, detail="寝室目录尚未同步完成")
@@ -453,7 +453,10 @@ async def _crawl_with_credentials(
     success, message, cookies = await adapter.login(username, password)
     if not success:
         return CrawlResponse(
-            school=request.school, status="failed", error=message, error_code="ACADEMIC_LOGIN_FAILED"
+            school=request.school,
+            status="failed",
+            error=message,
+            error_code="ACADEMIC_LOGIN_FAILED",
         ), False
     if request.action == "login":
         return CrawlResponse(

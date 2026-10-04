@@ -835,7 +835,7 @@ async def test_daily_reading_cache_falls_back_to_memory_when_redis_fails():
     [
         ("东塘8号公寓", "417房", "08417"),
         ("6号公寓", "417房", "06417"),
-        ("东塘国教7栋", "101房", None),
+        ("东塘国教7栋", "101房", "guojiao-07101"),
         ("东塘7号公寓", "104A房", None),
         ("请选择", "101房", None),
     ],
@@ -884,4 +884,4 @@ def test_existing_catalog_normalizes_dongtang_labels(tmp_path):
     service.catalog_path = path
     rooms = service.get_room_catalog()["rooms"]
     assert rooms[0]["room_number"] == "08417"
-    assert "room_number" not in rooms[1]
+    assert rooms[1]["room_number"] == "guojiao-07101"

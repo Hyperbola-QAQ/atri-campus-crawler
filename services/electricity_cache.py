@@ -11,9 +11,22 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from redis.exceptions import RedisError
 
+from utils.electricity_identity import normalize_room_number
 from utils.redis import get_redis_client
 
 logger = logging.getLogger(__name__)
+
+
+def _matches_room(result: dict[str, Any], room_number: str) -> bool:
+    value = result.get("room_number")
+    if value is None:
+        return True  # 兼容未包含身份字段的旧缓存载荷。
+    if not isinstance(value, str):
+        return False
+    try:
+        return normalize_room_number(value) == normalize_room_number(room_number)
+    except ValueError:
+        return False
 
 
 class AsyncKeyValueStore(Protocol):
@@ -64,7 +77,7 @@ class DailyElectricityCache:
         return current.date().isoformat(), next_midnight, ttl_seconds
 
     def _key(self, campus: str, room_number: str, day: str) -> str:
-        return f"{self._key_prefix}:{self.school}:{day}:{campus}:{room_number}"
+        return f"{self._key_prefix}:{self.school}:{day}:{campus}:{normalize_room_number(room_number)}"
 
     async def _client(self) -> AsyncKeyValueStore:
         if self._redis_client is None:
@@ -104,7 +117,7 @@ class DailyElectricityCache:
                 raw_value = await (await self._client()).get(key)
                 if raw_value is not None:
                     result = json.loads(raw_value)
-                    if isinstance(result, dict):
+                    if isinstance(result, dict) and _matches_room(result, room_number):
                         return result
                     logger.warning(
                         "Ignoring invalid electricity cache value from Redis"
@@ -117,6 +130,8 @@ class DailyElectricityCache:
         return await self._memory_get(key)
 
     async def set(self, campus: str, room_number: str, result: dict[str, Any]) -> None:
+        if not _matches_room(result, room_number):
+            raise ValueError("电费缓存的寝室身份不一致")
         day, expires_at, ttl_seconds = self._day_and_expiry()
         key = self._key(campus, room_number, day)
         if self._may_use_redis():

@@ -10,6 +10,7 @@ import httpx
 from lxml import etree  # ty: ignore[unresolved-import]
 
 from services.cookie_cache import PortalSession
+from utils.electricity_identity import normalize_room_number
 
 
 class ElectricityPlatformError(RuntimeError):
@@ -111,6 +112,10 @@ class HNUCMElectricityClient:
         password: str,
         session: PortalSession | None = None,
     ) -> tuple[dict[str, Any], PortalSession]:
+        try:
+            room_number = normalize_room_number(room_number)
+        except ValueError as exc:
+            raise ElectricityPlatformError("寝室标识格式不正确") from exc
         if not self.base_url:
             raise ElectricityPlatformError("未配置电费平台地址")
 
@@ -266,15 +271,17 @@ class HNUCMElectricityClient:
     def _room_number_from_options(building: str, room: str) -> str | None:
         """Convert selector labels such as ``6号公寓`` / ``417房`` to ``06417``."""
         building_match = re.fullmatch(
-            r"\s*(?:东塘)?(\d+)(?:号公寓|栋|号楼)\s*", building
+            r"\s*(?:东塘)?(?P<special>国教)?(?P<number>[0-9]+)(?:号公寓|栋|号楼)\s*",
+            building,
         )
         room_match = re.fullmatch(r"\s*(\d{3})房\s*", room)
         if building_match is None or room_match is None:
             return None
-        building_number = int(building_match.group(1))
+        building_number = int(building_match.group("number"))
         if not 0 <= building_number <= 99:
             return None
-        return f"{building_number:02d}{room_match.group(1)}"
+        prefix = "guojiao-" if building_match.group("special") else ""
+        return f"{prefix}{building_number:02d}{room_match.group(1)}"
 
     async def _get_csrf_token(self, client: httpx.AsyncClient) -> str:
         try:
@@ -355,7 +362,10 @@ class HNUCMElectricityClient:
         campus: str,
     ) -> list[dict[str, Any]]:
         """Resolve a displayed ``楼栋+房间`` number to portal option IDs."""
-        building_number = int(room_number[:-3])
+        try:
+            room_number = normalize_room_number(room_number)
+        except ValueError as exc:
+            raise ElectricityPlatformError("寝室标识格式不正确") from exc
         room_label = f"{room_number[-3:]}房"
         level_number = room_number[-3]
         base_selection = {
@@ -385,8 +395,12 @@ class HNUCMElectricityClient:
                 client, csrf_token, "build", area_selection
             ):
                 building_id = building.get("value")
-                if not isinstance(building_id, str) or not self._option_matches_number(
-                    building, building_number
+                if (
+                    not isinstance(building_id, str)
+                    or self._room_number_from_options(
+                        str(building.get("label", "")), room_label
+                    )
+                    != room_number
                 ):
                     continue
                 building_selection = {**area_selection, "buildid": building_id}
@@ -409,7 +423,13 @@ class HNUCMElectricityClient:
             raise ElectricityPlatformError(
                 f"{campus}校区未找到该寝室对应的电费平台房间"
             )
-        return selections
+        unique = {
+            tuple(item[key] for key in ("areaid", "buildid", "levelid", "roomid")): item
+            for item in selections
+        }
+        if len(unique) != 1:
+            raise ElectricityPlatformError("目录存在多个同名寝室, 无法安全确定电表")
+        return list(unique.values())
 
     @staticmethod
     def _area_matches_campus(option: dict[str, Any], campus: str) -> bool:
@@ -418,16 +438,14 @@ class HNUCMElectricityClient:
         return (
             option.get("value") == campus
             or label == campus
-            or (isinstance(label, str) and campus == "hanpu" and "含浦" in label)
+            or (
+                isinstance(label, str)
+                and campus in {"hanpu", "dongtang"}
+                and {"hanpu": "含浦", "dongtang": "东塘"}[campus] in label
+                and "宿舍" in label
+                and "商户" not in label
+            )
         )
-
-    @staticmethod
-    def _option_matches_number(option: dict[str, Any], number: int) -> bool:
-        label = option.get("label")
-        if not isinstance(label, str):
-            return False
-        match = re.fullmatch(r"\s*(?:东塘)?(\d+)(?:号公寓|栋|号楼)\s*", label)
-        return match is not None and int(match.group(1)) == number
 
     @staticmethod
     def _level_option_matches(option: dict[str, Any], level_number: str) -> bool:
