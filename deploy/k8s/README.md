@@ -19,3 +19,6 @@ kubectl -n atri-university-crawler rollout undo deployment/university-crawler
 ```
 
 旧版本保留在 `crawler-state` PVC 中。当前仅运行一个副本，因为电费账号轮转与 Cookie 缓存在进程内。更新时 API 会短暂中断。
+
+教务账号池通过 `ACADEMIC_ACCOUNTS_FILE` 固定保存在 PVC 的
+`/var/lib/crawler/config/academic_accounts.json`，账号接口写入的数据会跨源码版本保留。

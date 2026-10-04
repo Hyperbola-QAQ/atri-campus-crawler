@@ -49,6 +49,7 @@ data:
   ELECTRICITY_CACHE_KEY_PREFIX: electricity:daily
   ELECTRICITY_CACHE_TIMEZONE: Asia/Shanghai
   ELECTRICITY_ACCOUNTS_FILE: /run/secrets/electricity/accounts.json
+  ACADEMIC_ACCOUNTS_FILE: /var/lib/crawler/config/academic_accounts.json
   ELECTRICITY_ROOM_CATALOG_FILE: /var/lib/crawler/electricity_rooms.json
   ELECTRICITY_COLLECTION_STATE_FILE: /var/lib/crawler/electricity_collection_state.json
   ELECTRICITY_SCHEDULE_TIMEZONE: Asia/Shanghai
