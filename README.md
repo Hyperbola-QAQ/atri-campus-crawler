@@ -271,3 +271,7 @@ uv run pytest tests/test_electricity_live_api.py -v
 目前只实现 HNUCM。新增学校时须同时扩展本项目 `schemas/school.py`、对应教务/
 电费适配器注册表，以及 server `app/domain/schools.py`，实现该学校的校区规则。
 仅在账号文件中添加新学校代码不会自动开放查询能力。
+
+## 测试与回归
+
+完整测试矩阵、保留/新增用例和并发测量入口见 [测试方案](docs/testing-plan.md)。

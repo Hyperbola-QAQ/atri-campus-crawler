@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 
 
@@ -9,12 +10,14 @@ def safe_float(
         return default
     try:
         # 去掉首尾空格
-        value = value.strip()
+        value = value.strip() if isinstance(value, str) else value
         # 如果以 % 结尾，去掉 % 并除以 100
-        if value.endswith("%"):
-            return float(value[:-1]) / 100
-        return float(value)
-    except (ValueError, TypeError):
+        if isinstance(value, str) and value.endswith("%"):
+            result = float(value[:-1]) / 100
+        else:
+            result = float(value)
+        return result if math.isfinite(result) else default
+    except (ValueError, TypeError, OverflowError):
         return default
 
 
@@ -24,5 +27,5 @@ def safe_int(value: Optional[str], default: Optional[int] = None) -> Optional[in
         return default
     try:
         return int(float(value))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return default
