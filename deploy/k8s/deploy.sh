@@ -44,6 +44,18 @@ obj = {"apiVersion":"v1", "kind":"Secret", "metadata":{"name":"crawler-runtime-s
 subprocess.run(["kubectl", "apply", "-f", "-"], input=json.dumps(obj).encode(), check=True, stdout=subprocess.DEVNULL)
 PY
 
+# CI preserves the account pool already held in Kubernetes.
+if [[ "${PRESERVE_RUNTIME_SECRETS:-false}" == "true" ]]; then
+  "${remote[@]}" python3 - <<'PYREMOTE'
+import base64, json, subprocess
+secret = json.loads(subprocess.check_output([
+    "kubectl", "-n", "atri-campus-crawler", "get", "secret", "crawler-electricity-accounts", "-o", "json"
+]))
+accounts = json.loads(base64.b64decode(secret.get("data", {}).get("accounts.json", "")))
+if not isinstance(accounts, dict) or not isinstance(accounts.get("accounts"), list) or not accounts["accounts"]:
+    raise SystemExit("Existing cluster electricity accounts are missing or invalid; bootstrap locally first")
+PYREMOTE
+else
 python3 - "$repo_root/config/electricity_accounts.json" <<'PY' \
   | "${remote[@]}" kubectl apply -f - > /dev/null
 import json
@@ -63,6 +75,8 @@ print(json.dumps({
     "stringData": {"accounts.json": raw_accounts},
 }))
 PY
+
+fi
 
 # 从集群现有 Secret 复制密码，避免密码出现在本机输出或命令参数里。
 "${remote[@]}" python3 - <<'PY'
