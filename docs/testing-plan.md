@@ -1,6 +1,6 @@
 # university_crawler 测试方案与回归清单
 
-本方案基于 2026-10-05 当前代码。执行结果与测量快照见 [本次测试记录](test-results.md)。所有已有测试必须保留；补测与修复一起提交。测试失败返回非零，不以跳过新增用例、自动重试或降低既有门槛掩盖失败。
+本方案更新于 2026-10-07。执行结果与测量快照见 [本次测试记录](test-results.md)。所有已有测试必须保留；补测与修复一起提交。测试失败返回非零，不以跳过新增用例、自动重试或降低既有门槛掩盖失败。
 
 | 类型 | 用例位置 | 必验行为 |
 |---|---|---|
@@ -13,12 +13,12 @@
 
 ```sh
 uv sync --group dev
-.venv/bin/python -m pytest --cov=services --cov=utils --cov=adapter --cov=main --cov-branch --cov-fail-under=68 -q
+bash scripts/test-regression.sh -q
 .venv/bin/python tests/performance/run_local.py
 ```
 
 pytest 全量执行包含新增的压测工具单元测试；load 脚本单独启动 localhost Uvicorn，并关闭 lifespan，避免真实后台采集/群推送。
-默认不运行真实教务、Redis 和电费服务测试；保留 12 个 opt-in 用例。仅在独立验收环境通过 RUN_HNUCM_INTEGRATION_TESTS、RUN_INFRA_INTEGRATION_TESTS、RUN_ELECTRICITY_LIVE_TESTS 启用，并从环境提供测试账号。全业务统计含 adapter/main/services/utils；68% 是防退化基线，未覆盖真实平台分支仍须现场验收。
+默认不运行真实教务、Redis 和电费服务测试；保留 12 个 opt-in 用例。仅在独立验收环境通过 RUN_HNUCM_INTEGRATION_TESTS、RUN_INFRA_INTEGRATION_TESTS、RUN_ELECTRICITY_LIVE_TESTS 启用，并从环境提供测试账号。覆盖率统计含 adapter/main/services/utils/schemas，启用分支覆盖并以 95% 为回归门槛，不排除未覆盖的业务代码。普通测试模拟 Redis 不可用以验证内存降级，避免依赖开发机 Redis 和网络重试；显式注入的缓存模拟与 opt-in 集成测试不受影响。真实平台仍须现场验收。
 
 ## 并发与容量验证
 
@@ -39,6 +39,11 @@ URL、端口和PID需替换为实际测试部署；先测健康，再测有身�
 以下现有文件及本次新增文件全部纳入回归；不得只运行新增目录。每次修复至少跑所属项目全量测试；鉴权/身份/数据协议变动还需跑跨项目 HTTP 与命令回归。覆盖率报告保留缺失行和分支，后续功能修改时必须补上关联路径。
 
 - `tests/performance/test_load_http.py`
+- `tests/test_auth_unit.py`
+- `tests/test_academic_unit.py`
+- `tests/test_api_failure_paths.py`
+- `tests/test_electricity_protocol_edges.py`
+- `tests/test_electricity_service_edges.py`
 - `tests/test_academic_tempfiles.py`
 - `tests/test_adapter_course_schedule.py`
 - `tests/test_adapter_grade.py`

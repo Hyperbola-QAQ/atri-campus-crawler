@@ -1,3 +1,13 @@
+# 2026-10-07 crawler 覆盖率补测记录
+
+执行 `bash scripts/test-regression.sh -q --cov-report=json:/tmp/crawler-coverage-final.json`：**413 passed、12 skipped**，语句/分支综合覆盖率 **98.22%**。统计范围为 `adapter`、`main`、`services`、`utils`、`schemas`，未新增覆盖率排除规则，回归门槛由 68% 提高至 95%。
+
+新增 242 个离线参数化用例，覆盖教务认证及适配器返回、HTML/Excel 异常输入、HTTP 错误映射、启动任务清理、电费门户协议、账号文件及目录持久化、断点采集和缓存降级。普通测试模拟 Redis 不可用，避免访问开发机真实 Redis；原有 12 个真实服务用例保持 opt-in。新增测试及 conftest 的 Ruff 检查通过。
+
+测试触发了既有成绩解析代码中 lxml 元素布尔判断的 1 条 FutureWarning；不影响通过结果。真实教务/财务平台和 Redis 集成验收本次未执行。
+
+---
+
 # 2026-10-05 测试执行记录
 
 本次在 Linux 7.2.8-zen1-2-zen、32 个逻辑CPU的开发机执行。Python服务为本地单实例Uvicorn，Web为Next.js生产构建。所有测试数据隔离；高并发场景为短时基线，不代表生产持续容量。

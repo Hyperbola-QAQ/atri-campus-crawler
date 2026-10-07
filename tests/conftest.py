@@ -38,3 +38,24 @@ def pytest_collection_modifyitems(items):
                     reason="set RUN_ELECTRICITY_LIVE_TESTS=1 to query the real electricity API"
                 )
             )
+
+
+@pytest.fixture(autouse=True)
+def isolate_redis_for_offline_tests(monkeypatch, request):
+    """普通测试立即走缓存降级；真实 Redis 只由 infrastructure 测试访问。"""
+    if (
+        request.node.get_closest_marker("infrastructure")
+        or request.node.get_closest_marker("integration")
+        or request.node.get_closest_marker("electricity_live")
+    ):
+        return
+    from unittest.mock import AsyncMock
+    from redis.asyncio import Redis
+    from redis.exceptions import ConnectionError
+    from utils import redis as redis_module
+
+    monkeypatch.setattr(redis_module, "_REDIS_CLIENT", None)
+    for method in ("get", "set", "setex"):
+        monkeypatch.setattr(
+            Redis, method, AsyncMock(side_effect=ConnectionError("offline test"))
+        )
