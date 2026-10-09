@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
+from typing import Awaitable, Callable
 
 from services.electricity import ElectricityService
 
@@ -35,13 +36,31 @@ class ElectricitySchedule:
         )
         self._tasks: list[asyncio.Task[None]] = []
 
-    def start(self) -> None:
+    def start(self, *, startup_task: asyncio.Task | None = None) -> None:
         self._tasks = [
-            asyncio.create_task(self._resume_interrupted_collection()),
-            asyncio.create_task(self._run_weekly_catalog_refresh()),
-            asyncio.create_task(self._run_daily_reading_collection()),
-            asyncio.create_task(self._retry_failed_daily_collection()),
+            asyncio.create_task(self._after_startup(startup_task, job))
+            for job in (
+                self._run_weekly_catalog_refresh,
+                self._run_daily_reading_collection,
+                self._retry_failed_daily_collection,
+            )
         ]
+
+    async def _after_startup(
+        self,
+        startup_task: asyncio.Task | None,
+        job: Callable[[], Awaitable[None]],
+    ) -> None:
+        if startup_task is not None:
+            try:
+                # Cancelling scheduler shutdown must not detach the startup
+                # task from the lifespan owner that cancels and awaits it.
+                await asyncio.shield(startup_task)
+            except Exception:
+                logger.exception(
+                    "Electricity startup failed; scheduled jobs will retry"
+                )
+        await job()
 
     async def stop(self) -> None:
         for task in self._tasks:

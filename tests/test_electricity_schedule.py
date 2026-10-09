@@ -22,7 +22,7 @@ async def test_schedule_starts_and_stops_all_background_jobs():
     schedule = ElectricitySchedule(Service())
     schedule.start()
 
-    assert len(schedule._tasks) == 4
+    assert len(schedule._tasks) == 3
     await schedule.stop()
     assert all(task.done() for task in schedule._tasks)
 

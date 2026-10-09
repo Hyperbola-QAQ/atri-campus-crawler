@@ -9,6 +9,19 @@ from typing import Optional
 from utils.log import logger
 from urllib.parse import urlparse
 from datetime import datetime
+from zoneinfo import ZoneInfo
+import hashlib
+import hmac
+import secrets
+
+# 随进程生成的密钥避免缓存指纹成为可离线猜测密码的哈希。
+_COOKIE_FINGERPRINT_KEY = secrets.token_bytes(32)
+
+
+def credential_cache_identity(base_url: str, username: str, password: str) -> str:
+    payload = repr((base_url, username, password)).encode()
+    fingerprint = hmac.new(_COOKIE_FINGERPRINT_KEY, payload, hashlib.sha256).hexdigest()
+    return f"{username}:credential:{fingerprint}"
 
 
 async def save_cookies_to_redis(
@@ -27,7 +40,7 @@ async def save_cookies_to_redis(
     except Exception:
         redis_client = None
         return
-    
+
     if redis_client is None:
         return
 
@@ -185,7 +198,7 @@ async def get_cookies_from_redis(
     except Exception:
         redis_client = None
         return Cookies()
-    
+
     if redis_client is None:
         return Cookies()
 
@@ -222,7 +235,7 @@ def is_in_maintenance_window() -> bool:
     """
     判断当前时间是否在00:55-07:05的维护窗口内
     """
-    now = datetime.now().time()
+    now = datetime.now(ZoneInfo("Asia/Shanghai")).time()
     start = now.replace(hour=0, minute=55, second=0, microsecond=0)
     end = now.replace(hour=7, minute=5, second=0, microsecond=0)
     return start <= now <= end
@@ -235,6 +248,8 @@ async def get_valid_cookies(
     headers: dict,
     username: str,
     password: str,
+    *,
+    force_login: bool = False,
 ) -> Cookies:
     """
     获取有效的cookies，优先从缓存获取，如果缓存无效则重新登录获取
@@ -258,13 +273,18 @@ async def get_valid_cookies(
     # 从base_url提取域名
     parsed_url = urlparse(base_url)
     domain = parsed_url.hostname or "jwxt.hnucm.edu.cn"
+    cache_identity = credential_cache_identity(base_url, username, password)
 
     cookies: Cookies
 
     try:
         logger.debug(f"[{username}] 尝试从缓存获取有效的Cookie")
         # 从缓存获取Cookie
-        cookies = await get_cookies_from_redis(school_name, username, domain)
+        cookies = (
+            Cookies()
+            if force_login
+            else await get_cookies_from_redis(school_name, cache_identity, domain)
+        )
 
         # 验证缓存的Cookie是否可用
         if cookies:
@@ -281,7 +301,9 @@ async def get_valid_cookies(
                     logger.info(f"[{username}] 使用缓存Cookie登录成功！")
                     # 如果cookie有效，则续约cookie过期时间
                     try:
-                        await save_cookies_to_redis(school_name, username, cookies)
+                        await save_cookies_to_redis(
+                            school_name, cache_identity, cookies
+                        )
                         logger.debug(f"[{username}] Cookie已续约")
                     except Exception as e:
                         logger.warning(f"[{username}] Cookie续约失败: {e}")
@@ -313,7 +335,7 @@ async def get_valid_cookies(
     # 将cookie存储到Redis中供后续复用
     try:
         await save_cookies_to_redis(
-            school_name=school_name, username=username, cookies=cookies
+            school_name=school_name, username=cache_identity, cookies=cookies
         )
     except ValueError as e:
         logger.warning(f"[{username}] 保存Cookie时发生错误: {e}")

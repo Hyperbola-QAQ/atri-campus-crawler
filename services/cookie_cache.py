@@ -16,8 +16,11 @@ class PortalSession:
 class InMemoryCookieCache:
     """TTL cache; values remain local to this process and are never persisted."""
 
-    def __init__(self, ttl_seconds: float = 1800):
+    def __init__(self, ttl_seconds: float = 1800, max_entries: int = 1000):
+        if max_entries < 1:
+            raise ValueError("Cookie cache capacity must be positive")
         self.ttl_seconds = ttl_seconds
+        self.max_entries = max_entries
         self._entries: dict[str, tuple[float, PortalSession]] = {}
         self._lock = asyncio.Lock()
 
@@ -34,10 +37,16 @@ class InMemoryCookieCache:
 
     async def set(self, key: str, session: PortalSession) -> None:
         async with self._lock:
+            now = time.monotonic()
+            for old_key, (expiry, _) in list(self._entries.items()):
+                if expiry <= now:
+                    del self._entries[old_key]
             self._entries[key] = (
-                time.monotonic() + self.ttl_seconds,
+                now + self.ttl_seconds,
                 PortalSession(dict(session.cookies), session.csrf_token),
             )
+            while len(self._entries) > self.max_entries:
+                self._entries.pop(next(iter(self._entries)))
 
     async def delete(self, key: str) -> None:
         async with self._lock:

@@ -128,6 +128,7 @@ async def test_catalog_refresh_errors(error, status):
 @pytest.mark.parametrize("needs", [False, True])
 async def test_initial_sync(monkeypatch, failed, needs):
     service = SimpleNamespace(
+        resume_today_collection=AsyncMock(),
         refresh_room_catalog=AsyncMock(
             side_effect=ElectricityQueryError("offline") if failed else None
         ),
@@ -142,7 +143,7 @@ async def test_initial_sync(monkeypatch, failed, needs):
     await main._initial_electricity_sync()
     assert service.collect_room_readings.await_count == int(needs)
     if needs:
-        service.collect_room_readings.assert_awaited_once_with(force=True)
+        service.collect_room_readings.assert_awaited_once_with(retry_missing=True)
 
 
 @pytest.mark.parametrize("complete", [False, True])

@@ -42,7 +42,9 @@ class HNUCMAdapter(JWAdapter):
         self.headers = headers
         self.school_name = school_name
 
-    async def login(self, username: str, password: str) -> Tuple[bool, str, Cookies]:
+    async def login(
+        self, username: str, password: str, *, force_login: bool = False
+    ) -> Tuple[bool, str, Cookies]:
         """
         获取有效Cookies
 
@@ -61,6 +63,7 @@ class HNUCMAdapter(JWAdapter):
                 headers=self.headers,
                 username=username,
                 password=password,
+                force_login=force_login,
             )
             return True, "Success", cookies
         except Exception as e:

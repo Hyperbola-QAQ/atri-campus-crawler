@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+import tempfile
 from datetime import datetime, time, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -123,19 +124,27 @@ class ElectricityAccountPool:
         return validated_records
 
     def _write_records(self, records: list[dict[str, str]]) -> None:
+        temporary_path = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-            with temporary_path.open("w", encoding="utf-8") as accounts_file:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.path.parent, delete=False
+            ) as accounts_file:
+                temporary_path = Path(accounts_file.name)
                 json.dump(
                     {"accounts": records}, accounts_file, ensure_ascii=False, indent=2
                 )
                 accounts_file.write("\n")
+                accounts_file.flush()
+                os.fsync(accounts_file.fileno())
             os.replace(temporary_path, self.path)
         except (OSError, TypeError) as exc:
             raise AccountPoolConfigurationError(
                 f"{self.pool_name}账号池文件无法写入"
             ) from exc
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
     async def list_accounts(self) -> list[str]:
         """Return account identifiers only; passwords must never leave this layer."""
@@ -447,10 +456,16 @@ class ElectricityService:
 
     @staticmethod
     def _resolve_catalog_campus(catalog: dict[str, Any], campus: str) -> str:
-        """Map the legacy ``hanpu`` API alias to its current portal area ID."""
-        if campus not in {"hanpu", "dongtang"}:
+        """Map English and Chinese campus aliases to the portal area ID."""
+        labels = {
+            "hanpu": "含浦",
+            "含浦": "含浦",
+            "dongtang": "东塘",
+            "东塘": "东塘",
+        }
+        label = labels.get(campus)
+        if label is None:
             return campus
-        label = {"hanpu": "含浦", "dongtang": "东塘"}[campus]
         for room in catalog["rooms"]:
             if (
                 isinstance(room, dict)
@@ -550,6 +565,7 @@ class ElectricityService:
                 and isinstance(room.get("campus"), str)
                 and isinstance(room.get("room_number"), str)
             ]
+            catalog_total = len(rooms)
             if retry_missing:
                 # Cached rooms already have today's immutable snapshot.  Keep
                 # retries small and avoid putting avoidable pressure on the
@@ -610,6 +626,18 @@ class ElectricityService:
                             "total": len(rooms),
                         }
                     )
+            if retry_missing:
+                # Cached rooms have already been collected. Every missing room
+                # was attempted in this pass, so publish the full-catalog status
+                # even when startup had no checkpoint. Never persist an index
+                # into the dynamic retry subset.
+                self._write_collection_state(
+                    {
+                        "date": collection_date,
+                        "next_index": catalog_total,
+                        "total": catalog_total,
+                    }
+                )
             return {"succeeded": succeeded, "failed": failed}
 
     async def resume_today_collection(self) -> dict[str, int] | None:

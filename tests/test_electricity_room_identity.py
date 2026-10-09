@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
+import httpx
 
 from adapter.hnucm_adapter.electricity import (
     ElectricityPlatformError,
@@ -12,6 +13,75 @@ from adapter.hnucm_adapter.electricity import (
 from services.electricity import ElectricityAccountPool, ElectricityService
 from services.electricity_cache import DailyElectricityCache
 from utils.electricity_identity import normalize_room_number
+
+
+@pytest.mark.parametrize(
+    "campus,canonical,label",
+    [
+        ("hanpu", "campus-hanpu", "含浦学生宿舍"),
+        ("含浦", "campus-hanpu", "含浦学生宿舍"),
+        ("campus-hanpu", "campus-hanpu", "含浦学生宿舍"),
+        ("dongtang", "campus-dongtang", "东塘学生宿舍"),
+        ("东塘", "campus-dongtang", "东塘学生宿舍"),
+        ("campus-dongtang", "campus-dongtang", "东塘学生宿舍"),
+    ],
+)
+@pytest.mark.parametrize("room", ["6417", "6-417"])
+async def test_campus_alias_api_reads_canonical_cache(
+    tmp_path, campus, canonical, label, room
+):
+    from main import app, get_electricity_service
+
+    cache = type(
+        "Cache",
+        (),
+        {
+            "get": AsyncMock(
+                return_value={
+                    "campus": canonical,
+                    "room_number": "06417",
+                    "balance": 34.88,
+                }
+            )
+        },
+    )()
+    service = ElectricityService(
+        "https://payment.example",
+        ElectricityAccountPool(tmp_path / "accounts.json"),
+        reading_cache=cache,
+    )
+    service.catalog_path = tmp_path / "rooms.json"
+    service.catalog_path.write_text(
+        json.dumps(
+            {
+                "rooms": [
+                    {
+                        "campus": canonical,
+                        "campus_name": label,
+                        "building": "6号公寓",
+                        "room": "417房",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def override_service():
+        return service
+
+    app.dependency_overrides[get_electricity_service] = override_service
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get(f"/api/v1/electricity/{campus}/{room}")
+        assert response.status_code == 200, response.text
+        assert response.json()["campus"] == canonical
+        assert response.json()["balance"] == 34.88
+        cache.get.assert_awaited_once_with(canonical, "06417")
+    finally:
+        app.dependency_overrides.pop(get_electricity_service, None)
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 # university_crawler 测试方案与回归清单
 
-本方案更新于 2026-10-07。执行结果与测量快照见 [本次测试记录](test-results.md)。所有已有测试必须保留；补测与修复一起提交。测试失败返回非零，不以跳过新增用例、自动重试或降低既有门槛掩盖失败。
+本方案更新于 2026-10-08。执行结果与测量快照见 [本次测试记录](test-results.md)。所有已有测试必须保留；补测与修复一起提交。测试失败返回非零，不以跳过新增用例、自动重试或降低既有门槛掩盖失败。
 
 | 类型 | 用例位置 | 必验行为 |
 |---|---|---|
@@ -18,7 +18,9 @@ bash scripts/test-regression.sh -q
 ```
 
 pytest 全量执行包含新增的压测工具单元测试；load 脚本单独启动 localhost Uvicorn，并关闭 lifespan，避免真实后台采集/群推送。
-默认不运行真实教务、Redis 和电费服务测试；保留 12 个 opt-in 用例。仅在独立验收环境通过 RUN_HNUCM_INTEGRATION_TESTS、RUN_INFRA_INTEGRATION_TESTS、RUN_ELECTRICITY_LIVE_TESTS 启用，并从环境提供测试账号。覆盖率统计含 adapter/main/services/utils/schemas，启用分支覆盖并以 95% 为回归门槛，不排除未覆盖的业务代码。普通测试模拟 Redis 不可用以验证内存降级，避免依赖开发机 Redis 和网络重试；显式注入的缓存模拟与 opt-in 集成测试不受影响。真实平台仍须现场验收。
+默认不运行真实教务、Redis 和电费服务测试；保留 12 个 opt-in 用例。仅在独立验收环境通过 RUN_HNUCM_INTEGRATION_TESTS、RUN_INFRA_INTEGRATION_TESTS、RUN_ELECTRICITY_LIVE_TESTS 启用，并从环境提供测试账号。覆盖率统计含 adapter/main/services/utils/schemas，启用分支覆盖；语句/分支综合覆盖率、行覆盖率和分支覆盖率分别以 95% 为回归门槛，不排除未覆盖的业务代码。普通测试模拟 Redis 不可用以验证内存降级，避免依赖开发机 Redis 和网络重试；显式注入的缓存模拟与 opt-in 集成测试不受影响。真实平台仍须现场验收。
+
+本地脚本与 CI 共用 `scripts/test-regression.sh`，生成 `coverage.json`、`coverage.xml`，随后由 `scripts/check-coverage.py` 独立检查行与分支比例；综合分数达标不能掩盖分支不足。`tests/test_coverage_gate.py` 验证 94% 拒绝、95% 接受及独立指标门槛。
 
 ## 并发与容量验证
 
@@ -39,6 +41,8 @@ URL、端口和PID需替换为实际测试部署；先测健康，再测有身�
 以下现有文件及本次新增文件全部纳入回归；不得只运行新增目录。每次修复至少跑所属项目全量测试；鉴权/身份/数据协议变动还需跑跨项目 HTTP 与命令回归。覆盖率报告保留缺失行和分支，后续功能修改时必须补上关联路径。
 
 - `tests/performance/test_load_http.py`
+- `tests/test_validation_boundaries.py`
+- `tests/test_coverage_gate.py`
 - `tests/test_auth_unit.py`
 - `tests/test_academic_unit.py`
 - `tests/test_api_failure_paths.py`
@@ -63,3 +67,4 @@ URL、端口和PID需替换为实际测试部署；先测健康，再测有身�
 - `tests/test_redis.py`
 - `tests/test_schedule_paths.py`
 - `tests/test_school_isolation.py`
+- `tests/test_system_remediation.py`：验证真实登录证明、启动拥有者与调度等待、补采完成状态、Secret 首次初始化/API 配置归属、原子文件失败与竞争、缓存容量和 Redis 生命周期。

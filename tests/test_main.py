@@ -144,7 +144,9 @@ async def test_crawl_uses_academic_pool_when_credentials_are_omitted(
 
     assert response.status_code == 200
     assert response.json()["status"] == "success"
-    adapter.login.assert_awaited_once_with("pool-user", "pool-password")
+    adapter.login.assert_awaited_once_with(
+        "pool-user", "pool-password", force_login=True
+    )
 
 
 @pytest.mark.asyncio
@@ -172,8 +174,9 @@ async def test_startup_collects_when_today_cache_is_missing(monkeypatch):
     await main._initial_electricity_sync()
 
     service.refresh_room_catalog.assert_awaited_once_with()
-    service.needs_today_collection.assert_awaited_once_with()
-    service.collect_room_readings.assert_awaited_once_with(force=True)
+    assert service.needs_today_collection.await_count == 2
+    service.resume_today_collection.assert_awaited_once_with()
+    service.collect_room_readings.assert_awaited_once_with(retry_missing=True)
 
 
 @pytest.mark.asyncio
@@ -435,7 +438,7 @@ async def test_crawl_endpoint_keeps_login_operation(monkeypatch):
         "data": {"success": True},
         "error": None,
     }
-    adapter.login.assert_awaited_once_with("student", "password")
+    adapter.login.assert_awaited_once_with("student", "password", force_login=True)
 
 
 @pytest.mark.asyncio

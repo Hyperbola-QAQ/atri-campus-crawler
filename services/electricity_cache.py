@@ -45,8 +45,12 @@ class DailyElectricityCache:
         redis_client: AsyncKeyValueStore | None = None,
         key_prefix: str | None = None,
         timezone_name: str | None = None,
+        max_memory_entries: int = 50000,
     ):
         self.school = school
+        if max_memory_entries < 1:
+            raise ValueError("max_memory_entries must be positive")
+        self._max_memory_entries = max_memory_entries
         self._redis_client = redis_client
         self._key_prefix = key_prefix or os.getenv(
             "ELECTRICITY_CACHE_KEY_PREFIX", "electricity:daily"
@@ -62,6 +66,7 @@ class DailyElectricityCache:
             ) from exc
         self._memory_entries: dict[str, tuple[datetime, dict[str, Any]]] = {}
         self._memory_lock = asyncio.Lock()
+        self._last_memory_cleanup_day: str | None = None
         self._redis_retry_at = 0.0
 
     @classmethod
@@ -107,7 +112,18 @@ class DailyElectricityCache:
         self, key: str, result: dict[str, Any], expires_at: datetime
     ) -> None:
         async with self._memory_lock:
+            now = datetime.now(self._timezone)
+            day = now.date().isoformat()
+            # All daily entries expire at midnight. Sweep once per date instead
+            # of doing a full catalog scan for every individual room write.
+            if self._last_memory_cleanup_day != day:
+                for old_key, (expiry, _) in list(self._memory_entries.items()):
+                    if expiry <= now:
+                        del self._memory_entries[old_key]
+                self._last_memory_cleanup_day = day
             self._memory_entries[key] = (expires_at, copy.deepcopy(result))
+            while len(self._memory_entries) > self._max_memory_entries:
+                self._memory_entries.pop(next(iter(self._memory_entries)))
 
     async def get(self, campus: str, room_number: str) -> dict[str, Any] | None:
         day, _expires_at, _ttl = self._day_and_expiry()

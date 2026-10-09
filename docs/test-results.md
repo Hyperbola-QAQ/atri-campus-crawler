@@ -1,3 +1,11 @@
+# 2026-10-08 crawler 覆盖率与 CI 门槛验证
+
+执行 `bash scripts/test-regression.sh -q`：**431 passed、12 skipped**。行覆盖率 **99.26%（1866/1880）**，分支覆盖率 **96.89%（467/482）**，综合覆盖率 **98.77%**；三项均达到 95% 门槛。统计范围仍为 `adapter`、`main`、`services`、`utils`、`schemas`，未缩小范围或新增业务排除规则。
+
+新增 13 个账号校验、学校隔离、寝室身份和旧目录兼容用例，以及 5 个独立覆盖率门槛用例。CI 改为调用同一本地回归脚本，实际收集 JSON/XML 覆盖率并独立验证行与分支均达到 95%。`ruff check .` 通过。现有 12 个真实教务、Redis 和电费服务测试仍为 opt-in，本次未验收真实平台。保留既有 lxml FutureWarning。
+
+---
+
 # 2026-10-07 crawler 覆盖率补测记录
 
 执行 `bash scripts/test-regression.sh -q --cov-report=json:/tmp/crawler-coverage-final.json`：**413 passed、12 skipped**，语句/分支综合覆盖率 **98.22%**。统计范围为 `adapter`、`main`、`services`、`utils`、`schemas`，未新增覆盖率排除规则，回归门槛由 68% 提高至 95%。
@@ -70,3 +78,12 @@
 首次压测受HTTP代理影响，已让localhost自动直连，表中只含重跑结果。开发沙箱会使部分异步线程唤醒/退出阻塞，最终pytest、生产构建、HTTP/浏览器与压测均在允许启动本地进程/网络的环境执行。
 
 爬虫12个真实教务/Redis/电费用例未启用，因此没有声称真实平台验收通过。PostgreSQL、Kubernetes和真实QQ链路、持续压测、内存泄漏和外部平台限流仍需按方案在专用测试部署验证；当前报告不覆盖其容量。
+
+## 2026-10-08 系统修复三轮验证
+
+- 第一轮：启动断点恢复与缺失补采统一；绑定/登录强制验证密码；Secret 首次初始化到可写 PVC，由 API 管理；账号文件原子写入并保留 0600 权限；缓存容量及 Redis 连接释放。全套 455 passed、12 skipped。
+- 第二轮：跨项目契约检查发现无 checkpoint 的首次补采不会发布 completed，修复为补采完成发布全目录状态；周期任务等待启动恢复，避免 05:30 边界重复采集；日缓存清扫避免每个寝室遍历全表。全套 458 passed、12 skipped。
+- 第三轮：使用实际 ASGI 与 HNUCMAdapter 验证撤销旧密码即使有缓存仍被绑定验证拒绝；验证初始化发布失败及竞争写入不覆盖账号池、无临时文件残留。最终全套 461 passed、12 skipped，Ruff、git diff --check、部署脚本 shell 语法及变更 YAML 解析通过。
+
+执行方式 `.venv/bin/python -m pytest -q`。新增回归见 `tests/test_system_remediation.py`。
+这三轮只覆盖离线与本地契约，没有部署或访问真实学校、Redis、Kubernetes 服务。

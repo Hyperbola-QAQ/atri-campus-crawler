@@ -9,6 +9,34 @@ import pytest
 from adapter.hnucm_adapter import auth
 
 
+async def test_wrong_password_cannot_reuse_another_credentials_cookie(monkeypatch):
+    stored = {}
+
+    async def read(school, username, domain):
+        return stored.get((school, username), httpx.Cookies())
+
+    async def save(school_name, username, cookies):
+        stored[(school_name, username)] = cookies
+
+    async def login(**kwargs):
+        if kwargs["password"] != "correct":
+            raise ValueError("登录失败")
+        return httpx.Cookies({"sid": "verified"})
+
+    monkeypatch.setattr(auth, "is_in_maintenance_window", lambda: False)
+    monkeypatch.setattr(auth, "get_cookies_from_redis", read)
+    monkeypatch.setattr(auth, "save_cookies_to_redis", save)
+    fresh_login = AsyncMock(side_effect=login)
+    monkeypatch.setattr(auth, "get_cookies_from_jwxt", fresh_login)
+    install_transport(monkeypatch, lambda request: httpx.Response(200, text="培养管理"))
+    args = ("https://portal.test", "school", 1, {}, "student")
+    assert (await auth.get_valid_cookies(*args, "correct")).get("sid") == "verified"
+    with pytest.raises(ValueError, match="登录失败"):
+        await auth.get_valid_cookies(*args, "wrong")
+    assert (await auth.get_valid_cookies(*args, "correct")).get("sid") == "verified"
+    assert fresh_login.await_count == 2
+
+
 @pytest.mark.parametrize(
     "hour,minute,expected",
     [(0, 54, False), (0, 55, True), (7, 5, True), (7, 6, False), (23, 59, False)],
@@ -16,8 +44,9 @@ from adapter.hnucm_adapter import auth
 def test_maintenance_boundaries(monkeypatch, hour, minute, expected):
     class Clock(datetime):
         @classmethod
-        def now(cls):
-            return cls(2026, 10, 7, hour, minute)
+        def now(cls, tz=None):
+            assert str(tz) == "Asia/Shanghai"
+            return cls(2026, 10, 7, hour, minute, tzinfo=tz)
 
     monkeypatch.setattr(auth, "datetime", Clock)
     assert auth.is_in_maintenance_window() is expected
@@ -216,7 +245,13 @@ async def test_valid_cookie_selection(monkeypatch, mode):
             "https://portal.test", "school", 1, {}, "student", "password"
         )
         assert result is (cached if mode in {"cached", "renew_failed"} else fresh)
-        read.assert_awaited_once_with("school", "student", "portal.test")
+        read.assert_awaited_once_with(
+            "school",
+            auth.credential_cache_identity(
+                "https://portal.test", "student", "password"
+            ),
+            "portal.test",
+        )
         if mode in {"cached", "renew_failed"}:
             login.assert_not_awaited()
         else:

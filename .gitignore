@@ -30,3 +30,7 @@ logs/
 /config/electricity_rooms.json
 /config/electricity_collection_state.json
 /config/electricity_update_monitor_state.json
+
+# Generated regression coverage reports
+/coverage.json
+/coverage.xml

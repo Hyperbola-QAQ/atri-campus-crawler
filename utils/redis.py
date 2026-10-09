@@ -11,6 +11,14 @@ load_dotenv(f".env.{os.getenv('ENVIRONMENT', 'dev')}")
 _REDIS_CLIENT: redis.Redis | None = None
 
 
+async def close_redis_client() -> None:
+    """Release the owned connection pool on application shutdown."""
+    global _REDIS_CLIENT
+    client, _REDIS_CLIENT = _REDIS_CLIENT, None
+    if client is not None:
+        await client.aclose()
+
+
 def reset_redis_client_for_tests() -> None:
     """Reset the shared client after a test closes it."""
     global _REDIS_CLIENT

@@ -41,6 +41,7 @@ spec:
             - |
               cd "/var/lib/crawler/releases/${RELEASE_ID}"
               uv sync --locked --no-dev --no-install-project
+              uv run --locked --no-sync python -m services.account_bootstrap
           envFrom:
             - configMapRef:
                 name: crawler-runtime
@@ -59,6 +60,9 @@ spec:
               mountPath: /var/lib/crawler
             - name: tmp
               mountPath: /tmp
+            - name: accounts
+              mountPath: /run/secrets/electricity
+              readOnly: true
       containers:
         - name: university-crawler
           image: ghcr.io/astral-sh/uv:python3.14-trixie-slim

@@ -43,6 +43,7 @@ from services.electricity import (
 )
 from services.electricity_schedule import ElectricitySchedule
 from schemas.school import School
+from utils.redis import close_redis_client
 
 SCHOOL_ADAPTERS = {"HNUCM": HNUCMAdapter}
 ELECTRICITY_SERVICES = {"HNUCM": ElectricityService}
@@ -54,6 +55,7 @@ class CrawlRequest(BaseModel):
     action: Literal["login", "get_profile", "get_grades", "get_course_schedule"]
     username: str | None = Field(default=None, min_length=1)
     password: str | None = Field(default=None, min_length=1)
+    verify_credentials: bool = False
     params: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -112,18 +114,23 @@ async def get_crawl_academic_account_pool(request: CrawlRequest) -> AcademicAcco
 
 
 async def _initial_electricity_sync() -> None:
-    """Synchronise catalog, then repair a missing cache after 11:00 settlement."""
+    """Own startup recovery: resume the saved catalog, then fill cache misses."""
     service = await get_electricity_service()
+    try:
+        if await service.needs_today_collection():
+            await service.resume_today_collection()
+    except Exception:
+        logger.exception("Startup electricity collection resume failed")
     try:
         await service.refresh_room_catalog()
     except (AccountPoolConfigurationError, ElectricityQueryError):
         logger.warning("Initial electricity room catalog sync failed")
     try:
         if await service.needs_today_collection():
-            result = await service.collect_room_readings(force=True)
+            result = await service.collect_room_readings(retry_missing=True)
             logger.info("Startup electricity reading collection finished: %s", result)
-    except (AccountPoolConfigurationError, ElectricityQueryError):
-        logger.warning("Startup electricity reading collection failed")
+    except Exception:
+        logger.exception("Startup electricity reading collection failed")
 
 
 @asynccontextmanager
@@ -134,7 +141,9 @@ async def lifespan(app: FastAPI):
     app.state.electricity_schedule = ElectricitySchedule(
         await get_electricity_service()
     )
-    app.state.electricity_schedule.start()
+    app.state.electricity_schedule.start(
+        startup_task=app.state.electricity_catalog_task
+    )
     try:
         yield
     finally:
@@ -144,6 +153,7 @@ async def lifespan(app: FastAPI):
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
+        await close_redis_client()
 
 
 app = FastAPI(
@@ -468,7 +478,12 @@ async def _crawl_with_credentials(
     adapter_class = SCHOOL_ADAPTERS[request.school]
     adapter = adapter_class()
 
-    success, message, cookies = await adapter.login(username, password)
+    if request.verify_credentials or request.action == "login":
+        success, message, cookies = await adapter.login(
+            username, password, force_login=True
+        )
+    else:
+        success, message, cookies = await adapter.login(username, password)
     if not success:
         return CrawlResponse(
             school=request.school,

@@ -29,7 +29,9 @@ class JWAdapter(ABC):
         self.headers = headers
 
     @abstractmethod
-    async def login(self, username: str, password: str) -> Tuple[bool, str, Cookies]:
+    async def login(
+        self, username: str, password: str, *, force_login: bool = False
+    ) -> Tuple[bool, str, Cookies]:
         """
         从缓存读取Cookies，判断是否有效，有效则返回，否则进行登录教务系统
 
