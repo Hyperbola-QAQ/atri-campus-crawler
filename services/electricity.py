@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import random
 import re
@@ -20,6 +21,8 @@ from adapter.hnucm_adapter.electricity import (
 from utils.electricity_identity import normalize_room_number
 from services.cookie_cache import InMemoryCookieCache
 from services.electricity_cache import DailyElectricityCache
+
+logger = logging.getLogger(__name__)
 
 
 class AccountPoolConfigurationError(RuntimeError):
@@ -637,6 +640,13 @@ class ElectricityService:
                         "next_index": catalog_total,
                         "total": catalog_total,
                     }
+                )
+            if failed:
+                logger.warning(
+                    "Daily electricity collection incomplete: succeeded=%s failed=%s retry_missing=%s",
+                    succeeded,
+                    failed,
+                    retry_missing,
                 )
             return {"succeeded": succeeded, "failed": failed}
 
