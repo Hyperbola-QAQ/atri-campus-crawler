@@ -29,6 +29,14 @@ def _matches_room(result: dict[str, Any], room_number: str) -> bool:
         return False
 
 
+def _matches_identity(result: dict[str, Any], campus: str, room_number: str) -> bool:
+    # Legacy payloads may omit campus, but an explicit identity must match the
+    # key. The same room number can refer to different meters across campuses.
+    return ("campus" not in result or result["campus"] == campus) and _matches_room(
+        result, room_number
+    )
+
+
 class AsyncKeyValueStore(Protocol):
     def get(self, key: str, /) -> Awaitable[str | bytes | None]: ...
 
@@ -133,7 +141,9 @@ class DailyElectricityCache:
                 raw_value = await (await self._client()).get(key)
                 if raw_value is not None:
                     result = json.loads(raw_value)
-                    if isinstance(result, dict) and _matches_room(result, room_number):
+                    if isinstance(result, dict) and _matches_identity(
+                        result, campus, room_number
+                    ):
                         return result
                     logger.warning(
                         "Ignoring invalid electricity cache value from Redis"
@@ -146,7 +156,7 @@ class DailyElectricityCache:
         return await self._memory_get(key)
 
     async def set(self, campus: str, room_number: str, result: dict[str, Any]) -> None:
-        if not _matches_room(result, room_number):
+        if not _matches_identity(result, campus, room_number):
             raise ValueError("电费缓存的寝室身份不一致")
         day, expires_at, ttl_seconds = self._day_and_expiry()
         key = self._key(campus, room_number, day)
