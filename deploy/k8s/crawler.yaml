@@ -46,6 +46,8 @@ spec:
             - configMapRef:
                 name: crawler-runtime
           env:
+            - name: TZ
+              value: Asia/Shanghai
             - name: RELEASE_ID
               value: __CRAWLER_RELEASE__
           resources:
@@ -84,6 +86,8 @@ spec:
             - secretRef:
                 name: crawler-runtime-secrets
           env:
+            - name: TZ
+              value: Asia/Shanghai
             - name: RELEASE_ID
               value: __CRAWLER_RELEASE__
           startupProbe:
