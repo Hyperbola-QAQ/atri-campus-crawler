@@ -9,7 +9,6 @@ from .grade import GradeCrawler
 from .course_schedule import CourseScheduleCrawler, CourseScheduleItem
 from utils.log import logger
 
-# 请求头
 headers: dict[str, str] = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.5",
@@ -151,7 +150,6 @@ class HNUCMAdapter(JWAdapter):
                 school_name=self.school_name,
                 username=username,
             )
-            # 由于course_schedule模块还未异步化，这里使用执行器来运行同步函数
             schedules: List[CourseScheduleItem] = (
                 await course_schedule_crawler.get_course_schedule_from_jwxt(
                     cookies=cookies,

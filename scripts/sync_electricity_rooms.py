@@ -1,4 +1,4 @@
-"""Fetch the HNUCM payment portal's valid dorm-room options into the catalog."""
+"""将缴费平台的有效宿舍选项同步至目录。"""
 
 import asyncio
 

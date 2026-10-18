@@ -20,7 +20,7 @@ class ElectricityResponse(BaseModel):
 
 
 class ElectricityCollectionStatusResponse(BaseModel):
-    """Progress of crawler's current daily all-room electricity collection."""
+    """爬虫当日全寝室电量采集进度。"""
 
     school: School = "HNUCM"
     collection_date: str
@@ -30,7 +30,7 @@ class ElectricityCollectionStatusResponse(BaseModel):
 
 
 class ElectricityAccountResponse(BaseModel):
-    """Public account representation. Passwords are intentionally omitted."""
+    """公开账户信息，不包含密码。"""
 
     school: School = "HNUCM"
     xh: str
@@ -72,7 +72,7 @@ class ElectricityAccountUpdate(BaseModel):
 
 
 class AcademicAccountResponse(ElectricityAccountResponse):
-    """Public academic-account representation; passwords are omitted."""
+    """公开教务账户信息，不包含密码。"""
 
 
 class AcademicAccountListResponse(BaseModel):

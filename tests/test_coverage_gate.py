@@ -1,4 +1,4 @@
-"""A high combined score must not hide insufficient branch coverage."""
+"""验证高综合覆盖率不能掩盖分支覆盖不足。"""
 
 import importlib.util
 from pathlib import Path

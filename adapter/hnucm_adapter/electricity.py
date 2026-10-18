@@ -1,4 +1,4 @@
-"""Client for the HNUCM campus payment portal's dormitory electricity API."""
+"""湖南中医药大学缴费平台宿舍电量接口客户端。"""
 
 import asyncio
 import json
@@ -14,11 +14,11 @@ from utils.electricity_identity import normalize_room_number
 
 
 class ElectricityPlatformError(RuntimeError):
-    """Raised when the remote electricity service cannot return meter data."""
+    """远端电量服务无法返回电表数据时抛出。"""
 
 
 def _jsbn_hex_to_base64(value: str) -> str:
-    """Match jsbn's ``hex2b64`` conversion used by the portal login page."""
+    """匹配平台登录页使用的 jsbn hex2b64 转换。"""
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     output: list[str] = []
     index = 0
@@ -41,7 +41,7 @@ def _jsbn_hex_to_base64(value: str) -> str:
 
 
 def encrypt_password(password: str, public_key_hex: str, random_string: str) -> str:
-    """Encrypt ``password + random_string`` with RSA PKCS#1 v1.5 padding."""
+    """以 RSA PKCS#1 v1.5 填充加密 password + random_string。"""
     try:
         modulus = int(public_key_hex, 16)
     except ValueError as exc:
@@ -61,7 +61,7 @@ def encrypt_password(password: str, public_key_hex: str, random_string: str) -> 
     encoded_message = b"\x00\x02" + bytes(padding[:padding_size]) + b"\x00" + message
     encrypted_int = pow(int.from_bytes(encoded_message, "big"), 0x10001, modulus)
     encrypted_hex = format(encrypted_int, "x")
-    # jsbn's RSAKey.encrypt pads an odd-length hexadecimal result before hex2b64.
+    # jsbn 的 RSAKey.encrypt 会在 hex2b64 前为奇数长度的十六进制结果补零。
     if len(encrypted_hex) % 2:
         encrypted_hex = "0" + encrypted_hex
     return _jsbn_hex_to_base64(encrypted_hex)
@@ -85,7 +85,7 @@ def _response_json(response: httpx.Response) -> Any:
 
 
 class HNUCMElectricityClient:
-    """Logs in to the cashier portal and retrieves one dorm meter reading."""
+    """登录缴费平台并获取单个寝室的电表读数。"""
 
     DEFAULT_BASE_URL = "http://cw-zfpt.hnucm.edu.cn"
     csrf_path = "/xysf/api/Token/Csrf"
@@ -152,12 +152,10 @@ class HNUCMElectricityClient:
         password: str,
         session: PortalSession | None = None,
     ) -> tuple[list[dict[str, str]], PortalSession]:
-        """Return every selectable dorm room from every area visible to an account.
+        """返回账户可见区域中所有可选宿舍。
 
-        The payment site exposes its inventory as a four-level selector rather
-        than a single room-list endpoint.  Keep the area's opaque ``value`` as
-        the campus identifier: it is stable for the lifetime of a portal
-        record and, unlike a hand-maintained mapping, also covers new campuses.
+        平台通过四级选择器提供目录，没有单一寝室列表接口。使用区域的原始 value 作为校区 ID，
+        其在平台记录生命周期内保持稳定，也能覆盖手工映射未收录的新校区。
         """
         headers = {
             "Accept": "application/json, text/plain, */*",
@@ -206,9 +204,7 @@ class HNUCMElectricityClient:
             if not isinstance(area_id, str) or not isinstance(area_name, str):
                 continue
             if "宿舍" not in area_name or "商户" in area_name:
-                # A payment account can also see merchant areas.  Their room
-                # selectors are valid portal data, but they are not dormitory
-                # rooms and must not enter the electricity collection queue.
+                # 缴费账户也能访问商户区域；其寝室选择器虽有效，但商户房间不能进入宿舍电量采集队列。
                 continue
             area_selection = {**base_selection, "areaid": area_id}
             try:
@@ -216,8 +212,7 @@ class HNUCMElectricityClient:
                     client, csrf_token, "build", area_selection
                 )
             except ElectricityPlatformError:
-                # A single disabled area can return a non-selector response.
-                # Keep the rest of the dorm catalog available for collection.
+                # 单个停用区域可能返回非选择器响应，不应影响其余宿舍目录采集。
                 continue
             for building in buildings:
                 building_id, building_name = (
@@ -433,7 +428,7 @@ class HNUCMElectricityClient:
 
     @staticmethod
     def _area_matches_campus(option: dict[str, Any], campus: str) -> bool:
-        """Match a discovered campus ID, its exact label, or the legacy hanpu alias."""
+        """匹配已发现校区的 ID、精确名称或旧版 hanpu 别名。"""
         label = option.get("label")
         return (
             option.get("value") == campus

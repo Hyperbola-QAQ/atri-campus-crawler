@@ -1,4 +1,4 @@
-"""Seed the writable account pool once; subsequent deployments preserve API edits."""
+"""仅首次初始化可写账户池，后续部署保留 API 修改。"""
 
 import os
 import tempfile
@@ -10,7 +10,7 @@ from services.electricity import ElectricityAccountPool
 def seed_account_pool(source: Path, destination: Path) -> bool:
     if destination.is_file():
         return False
-    # Fail the init container if initial configuration is invalid. Never print it.
+    # 初始配置无效时让初始化容器失败，不能打印配置内容。
     ElectricityAccountPool(source)._read_records()
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
@@ -22,8 +22,7 @@ def seed_account_pool(source: Path, destination: Path) -> bool:
             output.write(source.read_bytes())
             output.flush()
             os.fsync(output.fileno())
-        # Atomic create-if-absent: an interrupted init cannot leave partial JSON,
-        # and simultaneous initialization cannot overwrite an API-owned pool.
+        # 仅在不存在时原子创建，避免中断留下不完整 JSON，也避免并发初始化覆盖 API 管理的账户池。
         try:
             os.link(temporary_path, destination)
         except FileExistsError:

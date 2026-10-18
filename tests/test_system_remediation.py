@@ -1,4 +1,4 @@
-"""System contracts: bootstrap ownership, credential proof, recovery and resources."""
+"""验证初始化归属、凭据证明、恢复和资源约束。"""
 
 import json
 import asyncio
@@ -173,7 +173,7 @@ async def test_first_startup_retry_publishes_full_catalog_completion(
         "query_live",
         AsyncMock(side_effect=lambda room, campus: {"room_number": room}),
     )
-    # One successful snapshot already exists, but no persisted full-pass state.
+    # 已有一条成功快照，但尚无持久化的完整扫描状态。
     await service.reading_cache.set("c", "1234", {"room_number": "1234"})
     assert not service.daily_collection_status()["completed"]
     await service.collect_room_readings(retry_missing=True, interval_seconds=0.001)

@@ -10,7 +10,6 @@ import xlrd
 import tempfile
 
 
-# 获取当前学期
 async def get_current_semester() -> str:
     """
     获取期望获取的学期，格式为 yyyy-yyyy-1 或 yyyy-yyyy-2
@@ -103,7 +102,6 @@ async def parse_course_block(lines: List[str]) -> Dict[str, Any]:
     period_match = re.search(r"\[(\d+(?:-\d+)*节)]", time_info)
     class_period = period_match.group(1) if period_match else ""
 
-    # 初始化教师信息
     teacher_title = ""
 
     # 如果行数大于等于3，处理教师信息
@@ -111,21 +109,18 @@ async def parse_course_block(lines: List[str]) -> Dict[str, Any]:
         teacher_info = lines[-3]
         if teacher_info:  # 教师信息不为空
             teacher_name = teacher_info
-            # 提取教师职称
             title_match = re.search(r"\((.*)\)", teacher_info)
             if title_match:
                 # 判断括号内容是否为职称（不是"助教"或"分组"等字样）
                 title = title_match.group(1)
                 if not any(keyword in title for keyword in ["助教", "分组"]):
                     teacher_title = title
-                    # 去掉职称部分的教师名
                     teacher_name = re.sub(r"\(.*\)", "", teacher_info).strip()
                 elif "助教" in title:
                     teacher_title = "助教"
                     teacher_name = re.sub(r"\(.*\)", "", teacher_info).strip()
 
         else:
-            # 教师信息为空的情况
             teacher_name = "未知教师"
     else:
         # 行数小于3的情况，标记为未知教师
@@ -170,7 +165,6 @@ async def parse_cell_content(content: str) -> list[Dict[str, Any]]:
         lines = [line.strip() for line in course_blocks[i].split("\n") if line.strip()]
         # 如果当前块行数小于3，检查是否需要与后续块合并
         if len(lines) < 3:
-            # 标记需要合并
             merged_content = course_blocks[i]
             i += 1
             # 继续检查后续块是否也需要合并
@@ -203,7 +197,6 @@ async def parse_cell_content(content: str) -> list[Dict[str, Any]]:
         if not lines:
             continue
 
-        # 解析课程信息
         course_info = await parse_course_block(lines)
         if course_info:
             courses.append(course_info)

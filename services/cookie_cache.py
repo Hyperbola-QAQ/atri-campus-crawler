@@ -1,4 +1,4 @@
-"""Process-local cache for authenticated payment portal sessions."""
+"""已认证缴费平台会话的进程内缓存。"""
 
 import asyncio
 import time
@@ -7,14 +7,14 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True, repr=False)
 class PortalSession:
-    """The minimum session state needed to reuse a portal login."""
+    """复用平台登录所需的最小会话状态。"""
 
     cookies: dict[str, str] = field(repr=False)
     csrf_token: str = field(repr=False)
 
 
 class InMemoryCookieCache:
-    """TTL cache; values remain local to this process and are never persisted."""
+    """带过期时间的进程内缓存，不持久化会话值。"""
 
     def __init__(self, ttl_seconds: float = 1800, max_entries: int = 1000):
         if max_entries < 1:
@@ -53,4 +53,4 @@ class InMemoryCookieCache:
             self._entries.pop(key, None)
 
 
-# TODO(Redis): replace this process-local cache with a shared Redis backend.
+# TODO(Redis): 将进程内缓存迁移至共享 Redis。

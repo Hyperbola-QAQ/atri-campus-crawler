@@ -52,7 +52,6 @@ async def save_cookies_to_redis(
             cookie_items.append(f"{cookie.name}={cookie.value}")
         cookie_str: str = "; ".join(cookie_items)
 
-        # 将cookie字符串存入redis
         await redis_client.setex(key, 1800, cookie_str)
         logger.debug(f"[{username}] 成功将Cookie信息保存到Redis: {key}")
     except Exception as e:
@@ -84,7 +83,6 @@ async def get_cookies_from_jwxt(
         ValueError: 登录失败或验证码识别失败
         httpx.RequestError: 网络请求失败
     """
-    # 创建异步会话维持cookie
     async with httpx.AsyncClient(
         base_url=base_url, follow_redirects=True, timeout=timeout, headers=headers
     ) as client:
@@ -159,7 +157,6 @@ async def get_cookies_from_jwxt(
             logger.debug(f"[{username}] 验证登录结果，状态码: {response.status_code}")
             if response.status_code == 200 and "培养管理" in response.text:
                 logger.info(f"[{username}] 登录成功！")
-                # 获取会话cookies用于缓存到redis
                 cookies: Cookies = client.cookies
                 logger.debug(f"[{username}] 获取到Cookies")
                 return cookies
@@ -279,14 +276,12 @@ async def get_valid_cookies(
 
     try:
         logger.debug(f"[{username}] 尝试从缓存获取有效的Cookie")
-        # 从缓存获取Cookie
         cookies = (
             Cookies()
             if force_login
             else await get_cookies_from_redis(school_name, cache_identity, domain)
         )
 
-        # 验证缓存的Cookie是否可用
         if cookies:
             logger.debug(f"[{username}] 发现缓存Cookie，验证有效性")
             async with httpx.AsyncClient(
@@ -316,7 +311,6 @@ async def get_valid_cookies(
 
     try:
         logger.debug(f"[{username}] 从教务系统获取新的Cookie")
-        # 从教务系统获取Cookie
         cookies = await get_cookies_from_jwxt(
             base_url=base_url,
             timeout=timeout,
@@ -332,7 +326,6 @@ async def get_valid_cookies(
         logger.error(f"[{username}] 获取Cookie时发生未知错误: {e}")
         raise ValueError(f"获取Cookie时发生未知错误: {e}")
 
-    # 将cookie存储到Redis中供后续复用
     try:
         await save_cookies_to_redis(
             school_name=school_name, username=cache_identity, cookies=cookies

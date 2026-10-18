@@ -1,4 +1,4 @@
-"""Canonical school codes; campus identifies a location within a school."""
+"""统一学校代码；校区表示学校内部的位置。"""
 
 from typing import Literal
 

@@ -43,12 +43,10 @@ class GradeCrawler:
         else:
             params = {}
 
-        # 获取主页面数据
         logger.debug(f"[{self.username}] 获取成绩主页面数据")
         course_data = await self.fetch_main_page(params, cookies)
         logger.debug(f"[{self.username}] 获取到 {len(course_data)} 条课程记录")
 
-        # 顺序获取详情页数据
         logger.debug(f"[{self.username}] 获取详情页数据")
 
         async def _fetch_and_update(course, cookies):
@@ -62,12 +60,10 @@ class GradeCrawler:
                     f"[{self.username}] 获取课程详情失败: {course.get('课程名称', '未知课程')} - {e}"
                 )
 
-        # 并发执行
         await asyncio.gather(
             *[_fetch_and_update(course, cookies) for course in course_data]
         )
 
-        # 将原始字典数据映射为 GradeItem 列表
         grade_items = [
             GradeItem(
                 course_code=course.get("课程编号"),
@@ -112,7 +108,6 @@ class GradeCrawler:
         Returns:
             解析后的课程数据列表
         """
-        # 使用lxml解析HTML
         tree = etree.HTML(html_content)
 
         # 根据HTML结构，先查找id为dataList的表格
@@ -158,7 +153,6 @@ class GradeCrawler:
             # 提取基本信息，根据HTML表格结构调整列索引
             # 提取成绩和详情页链接
             score_cell = columns[4]
-            # logger.debug(f"第 {row_index+1} 行成绩单元格内容: {etree.tostring(score_cell, encoding='unicode')}")
             score_a_tag = (
                 score_cell.xpath(".//a")[0] if score_cell.xpath(".//a") else None
             )
@@ -198,7 +192,6 @@ class GradeCrawler:
                 "通选课模块": columns[15].text.strip() if columns[15].text else "",
                 "详情页链接": detail_link,
             }
-            # logger.debug(f"[{username}] 解析课程信息: {course['课程名称']}")
 
             course_data.append(course)
 
@@ -237,7 +230,6 @@ class GradeCrawler:
                 )
                 return []
 
-            # 调用解析函数处理HTML内容
             return await self.parse_main_page_html(response.text)
 
     async def parse_detail_page_html(self, html_content: str) -> Dict[str, Any]:
@@ -249,7 +241,6 @@ class GradeCrawler:
         Returns:
             解析后的详情数据字典
         """
-        # 使用lxml解析HTML
         tree = etree.HTML(html_content)
 
         # 修改表格查找逻辑，首先查找schedule_id，然后查找id
@@ -268,24 +259,20 @@ class GradeCrawler:
             logger.debug(f"[{self.username}] 页面标题: {title}")
             return {}
 
-        # 获取所有tr元素
         rows = table.xpath("./tr") if table is not None else []
         if len(rows) < 2:
             logger.warning(f"[{self.username}] 详情页表格数据不完整")
             return {}
 
-        # 提取表头
         headers_list = [
             th.text.strip() if th.text else "" for th in rows[0].xpath("./th")
         ]
-        # 提取数据行
         data_row = rows[1].xpath("./td")
 
         if len(data_row) < len(headers_list):
             logger.warning(f"[{self.username}] 详情页列数不匹配")
             return {}
 
-        # 创建详情数据字典
         detail_data = {}
         for i, header in enumerate(headers_list):
             if i < len(data_row):
@@ -325,5 +312,4 @@ class GradeCrawler:
             )
             return {}
 
-        # 调用解析函数处理HTML内容
         return await self.parse_detail_page_html(response.text)

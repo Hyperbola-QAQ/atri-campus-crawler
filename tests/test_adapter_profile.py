@@ -32,7 +32,6 @@ class TestHNUCMAdapter:
         )
         xls_path: Path = await profile_crawler.fetch_profile_xls(cookies)
 
-        # 断言
         assert xls_path.exists(), "xls 文件不存在"
         assert xls_path.is_file(), "xls_path 不是文件"
         assert xls_path.suffix == ".xls", "xls 文件后缀不是 .xls"
@@ -50,7 +49,6 @@ class TestHNUCMAdapter:
 
         logger.debug(profile)
 
-        # 断言
         assert profile["department"] == "信息科学与工程学院", "院系解析错误"
         assert profile["major"] == "计算机科学与技术", "专业解析错误"
         assert profile["class_name"] == "测试班级", "班级解析错误"
@@ -73,5 +71,4 @@ class TestHNUCMAdapter:
 
         assert profile is not None
 
-        # 断言
         assert profile.gender == "男", "性别解析错误"

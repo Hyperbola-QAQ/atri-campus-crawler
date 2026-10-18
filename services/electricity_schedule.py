@@ -1,4 +1,4 @@
-"""In-process schedules for refreshing the dorm catalog and daily readings."""
+"""寝室目录与日电量读数的进程内定时任务。"""
 
 import asyncio
 import logging
@@ -24,7 +24,7 @@ LAST_DAILY_COLLECTION_RETRY_AT = time(23)
 
 
 class ElectricitySchedule:
-    """Run the two requested electricity jobs while the API process is alive."""
+    """在 API 进程存活期间运行两个电量任务。"""
 
     def __init__(self, service: ElectricityService):
         self.service = service
@@ -53,8 +53,7 @@ class ElectricitySchedule:
     ) -> None:
         if startup_task is not None:
             try:
-                # Cancelling scheduler shutdown must not detach the startup
-                # task from the lifespan owner that cancels and awaits it.
+                # 调度器关闭被取消时，启动任务仍须由生命周期持有者取消并等待结束。
                 await asyncio.shield(startup_task)
             except Exception:
                 logger.exception(
@@ -104,7 +103,7 @@ class ElectricitySchedule:
                 logger.exception("Scheduled electricity reading collection failed")
 
     async def _retry_failed_daily_collection(self) -> None:
-        """Retry unavailable readings after the 05:30 maintenance window."""
+        """在 05:30 维护窗口结束后补采不可用读数。"""
         while True:
             await self._sleep_until(self._next_collection_retry())
             try:
@@ -114,8 +113,7 @@ class ElectricitySchedule:
                     )
                     logger.info("Retried electricity reading collection: %s", result)
             except Exception as exc:
-                # Keep this task alive so that it can retry when the platform
-                # becomes available again.
+                # 保持任务存活，以便平台恢复后重试。
                 logger.warning("Electricity reading collection will retry: %s", exc)
 
     async def _sleep_until(self, scheduled_at: datetime) -> None:

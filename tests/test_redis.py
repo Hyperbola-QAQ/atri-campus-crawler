@@ -47,7 +47,7 @@ async def test_get_redis_client_uses_environment(monkeypatch):
 @pytest.mark.infrastructure
 async def test_get_redis_client():
     """测试获取Redis客户端"""
-    reset_redis_client_for_tests()  # sync call
+    reset_redis_client_for_tests()  # 此处调用同步接口。
     redis_client: redis.Redis | None = None
     try:
         redis_client = await get_redis_client()

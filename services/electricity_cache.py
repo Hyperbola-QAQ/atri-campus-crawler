@@ -1,4 +1,4 @@
-"""Daily electricity-reading cache with Redis and in-process fallback."""
+"""使用 Redis 缓存日电量读数，支持进程内降级。"""
 
 import asyncio
 import copy
@@ -30,8 +30,7 @@ def _matches_room(result: dict[str, Any], room_number: str) -> bool:
 
 
 def _matches_identity(result: dict[str, Any], campus: str, room_number: str) -> bool:
-    # Legacy payloads may omit campus, but an explicit identity must match the
-    # key. The same room number can refer to different meters across campuses.
+    # 旧载荷可能缺少校区，但显式身份须与缓存键一致；不同校区的同号寝室可能对应不同电表。
     return ("campus" not in result or result["campus"] == campus) and _matches_room(
         result, room_number
     )
@@ -44,7 +43,7 @@ class AsyncKeyValueStore(Protocol):
 
 
 class DailyElectricityCache:
-    """Cache readings through the next local midnight, with a memory fallback."""
+    """缓存读数至下次本地午夜，Redis 不可用时降级为内存缓存。"""
 
     def __init__(
         self,
@@ -122,8 +121,7 @@ class DailyElectricityCache:
         async with self._memory_lock:
             now = datetime.now(self._timezone)
             day = now.date().isoformat()
-            # All daily entries expire at midnight. Sweep once per date instead
-            # of doing a full catalog scan for every individual room write.
+            # 日缓存统一在午夜过期，每日清理一次，避免每写一间寝室都扫描完整目录。
             if self._last_memory_cleanup_day != day:
                 for old_key, (expiry, _) in list(self._memory_entries.items()):
                     if expiry <= now:

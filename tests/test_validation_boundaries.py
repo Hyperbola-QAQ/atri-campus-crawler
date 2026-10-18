@@ -1,4 +1,4 @@
-"""Public credential validation and persisted catalog compatibility boundaries."""
+"""验证公开凭据校验与持久化目录兼容边界。"""
 
 import json
 

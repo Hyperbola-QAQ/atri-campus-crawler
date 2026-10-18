@@ -32,7 +32,6 @@ class TestHNUCMAdapter:
             username=self.username,
         )
 
-        # 解析 HTML 内容
         grade_items: list = await grade_crawler.parse_main_page_html(
             html_content=html_content
         )
@@ -303,7 +302,6 @@ class TestHNUCMAdapter:
         ) as f:
             html_content = f.read()
 
-        # 解析 HTML 内容
         grade_crawler = GradeCrawler(
             base_url=adapter.base_url,
             headers=adapter.headers,
@@ -338,7 +336,6 @@ class TestHNUCMAdapter:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_get_all_grades(self, adapter: HNUCMAdapter) -> None:
-        # 测试获取所有学期成绩
         success, message, cookies = await adapter.login(self.username, self.password)
         if not success:
             pytest.skip(f"登录失败，跳过测试: {message}")
@@ -356,7 +353,6 @@ class TestHNUCMAdapter:
     async def test_get_grades_with_invalid_semester(
         self, adapter: HNUCMAdapter
     ) -> None:
-        # 测试使用无效学期参数
         success, message, cookies = await adapter.login(self.username, self.password)
         if not success:
             pytest.skip(f"登录失败，跳过测试: {message}")
@@ -374,7 +370,6 @@ class TestHNUCMAdapter:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_get_grades_structure(self, adapter: HNUCMAdapter) -> None:
-        # 测试成绩数据结构
         success, message, cookies = await adapter.login(self.username, self.password)
         if not success:
             pytest.skip(f"登录失败，跳过测试: {message}")
@@ -385,18 +380,15 @@ class TestHNUCMAdapter:
             username=self.username,
         )
 
-        # 确保返回的是列表且至少有一个元素
         assert isinstance(grade_list, list)
         assert len(grade_list) > 0, "成绩列表为空，无法验证结构"
 
         first_grade = grade_list[0]
 
-        # 确保 first_grade 是 GradeItem 类型
         assert isinstance(
             first_grade, GradeItem
         ), f"期望成绩项为 GradeItem 类型，实际为 {type(first_grade)}"
 
-        # 检查必要属性是否存在
         required_attrs = [
             "course_name",
             "course_credit",

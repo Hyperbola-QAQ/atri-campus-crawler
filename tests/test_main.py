@@ -15,7 +15,7 @@ from services.electricity import AcademicAccountPool, ElectricityAccountPool
 
 @pytest.fixture(autouse=True)
 def internal_api_test_token(monkeypatch):
-    """All API tests act as the trusted in-cluster caller."""
+    """所有 API 测试均模拟可信集群内部调用方。"""
     monkeypatch.setenv("CRAWLER_INTERNAL_TOKEN", "test-token")
     original_client = httpx.AsyncClient
 
@@ -607,7 +607,7 @@ async def test_crawl_endpoint_reports_action_failure(
 
 @pytest.mark.asyncio
 async def test_all_electricity_routes_reject_unsupported_school():
-    # Explicit route validation must remain effective with test overrides.
+    # 即使测试覆盖依赖，路由的显式校验也须生效。
     override_electricity_service(Mock())
     override_electricity_account_pool(Mock())
     try:

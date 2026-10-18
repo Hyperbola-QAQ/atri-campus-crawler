@@ -44,7 +44,7 @@ obj = {"apiVersion":"v1", "kind":"Secret", "metadata":{"name":"crawler-runtime-s
 subprocess.run(["kubectl", "apply", "-f", "-"], input=json.dumps(obj).encode(), check=True, stdout=subprocess.DEVNULL)
 PY
 
-# CI preserves the account pool already held in Kubernetes.
+# CI 保留 Kubernetes 中已有的账户池。
 if [[ "${PRESERVE_RUNTIME_SECRETS:-false}" == "true" ]]; then
   "${remote[@]}" python3 - <<'PYREMOTE'
 import base64, json, subprocess

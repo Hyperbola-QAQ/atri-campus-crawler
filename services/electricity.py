@@ -1,4 +1,4 @@
-"""Credential rotation and query orchestration for dorm electricity data."""
+"""宿舍电量查询编排与凭据轮换。"""
 
 import asyncio
 import hashlib
@@ -26,19 +26,19 @@ logger = logging.getLogger(__name__)
 
 
 class AccountPoolConfigurationError(RuntimeError):
-    """Raised when the internal account pool is missing or invalid."""
+    """内部账户池缺失或无效时抛出。"""
 
 
 class ElectricityQueryError(RuntimeError):
-    """Raised when every account in the pool fails to retrieve the reading."""
+    """账户池中的所有账户均无法获取读数时抛出。"""
 
 
 class AccountNotFoundError(RuntimeError):
-    """Raised when a requested account does not exist in the pool."""
+    """请求的账户不在账户池中时抛出。"""
 
 
 class AccountAlreadyExistsError(RuntimeError):
-    """Raised when an account identifier is already present in the pool."""
+    """账户标识已存在于账户池时抛出。"""
 
 
 @dataclass(frozen=True, repr=False)
@@ -49,13 +49,13 @@ class ElectricityAccount:
 
     @property
     def cache_key(self) -> str:
-        """Return a non-reversible cache key without retaining credentials in it."""
+        """生成不可逆缓存键，键中不保留凭据。"""
         identity = f"{self.school}\0{self.username}\0{self.password}".encode("utf-8")
         return hashlib.sha256(identity).hexdigest()
 
 
 class ElectricityAccountPool:
-    """Read an internal JSON account list and rotate account order."""
+    """读取内部 JSON 账户列表并轮换使用顺序。"""
 
     _file_locks: ClassVar[dict[str, asyncio.Lock]] = {}
 
@@ -150,7 +150,7 @@ class ElectricityAccountPool:
                 temporary_path.unlink(missing_ok=True)
 
     async def list_accounts(self) -> list[str]:
-        """Return account identifiers only; passwords must never leave this layer."""
+        """仅返回账户标识，密码不能离开此层。"""
         async with self._lock:
             return [
                 record["xh"]
@@ -217,14 +217,14 @@ class ElectricityAccountPool:
 
 
 class AcademicAccountPool(ElectricityAccountPool):
-    """A separate rotating credential pool for the academic affairs system."""
+    """教务系统独立使用的轮换凭据池。"""
 
     def __init__(self, path: str | Path, *, school: str = "HNUCM"):
         super().__init__(path, pool_name="教务", school=school)
 
 
 class ElectricityService:
-    """Attempts configured accounts in rotating order and returns meter data."""
+    """按轮换顺序尝试配置的账户并返回电表数据。"""
 
     def __init__(
         self,
@@ -299,7 +299,7 @@ class ElectricityService:
                     session=cached_session,
                 )
             except Exception:
-                # A cached portal session may have expired; discard it and log in once.
+                # 缓存的平台会话可能已过期，清除后重新登录一次。
                 await self.cookie_cache.delete(account.cache_key)
             else:
                 await self.cookie_cache.set(account.cache_key, session)
@@ -326,11 +326,9 @@ class ElectricityService:
         return result
 
     async def query_live(self, room_number: str, campus: str) -> dict[str, Any]:
-        """Read a current meter value from the portal without using daily cache.
+        """直接读取平台当前电表值，不使用日缓存。
 
-        This is deliberately separate from :meth:`query`: operational monitors
-        need to see a finance-system refresh even after the daily API cache has
-        been populated.
+        此接口独立于 query，使运维监测在日缓存已填充后仍能观察财务系统刷新。
         """
         if not self.base_url:
             raise AccountPoolConfigurationError("未配置电费平台地址")
@@ -347,7 +345,7 @@ class ElectricityService:
                 platform_error = exc
                 await self.cookie_cache.delete(account.cache_key)
             except Exception:
-                # Do not attach the exception or account identity to logs or API output.
+                # 日志和 API 输出不能附带异常原文或账户身份。
                 await self.cookie_cache.delete(account.cache_key)
                 continue
 
@@ -356,12 +354,10 @@ class ElectricityService:
         raise ElectricityQueryError("电费查询失败，请检查账号池或稍后重试")
 
     async def refresh_room_catalog(self) -> dict[str, Any]:
-        """Log in once and persist the portal's complete selectable room inventory.
+        """登录一次并持久化平台完整的可选宿舍目录。
 
-        Catalog records deliberately contain no credentials, cookies, meter
-        readings, or portal room IDs.  They are safe to serve to callers and
-        let clients discover valid campus/room combinations before querying a
-        meter.
+        目录不含凭据、Cookie、电表读数或平台房间 ID，可安全提供给调用方，
+        供客户端在查表前发现有效的校区与寝室组合。
         """
         if not self.base_url:
             raise AccountPoolConfigurationError("未配置电费平台地址")
@@ -398,7 +394,7 @@ class ElectricityService:
         raise ElectricityQueryError("寝室目录同步失败，请检查账号池或稍后重试")
 
     def get_room_catalog(self) -> dict[str, Any] | None:
-        """Read the last successfully synchronised public room catalog."""
+        """读取最近一次成功同步的公开寝室目录。"""
         if self.catalog_path is None or not self.catalog_path.is_file():
             return None
         try:
@@ -412,9 +408,7 @@ class ElectricityService:
             or not isinstance(catalog.get("rooms"), list)
         ):
             return None
-        # Catalogs written by older releases can include non-dorm merchant
-        # areas.  Filter them at read time too, so an existing cache never
-        # causes the scheduled reader to query merchant meters.
+        # 旧版目录可能包含商户区域，读取缓存时也须过滤，防止定时采集查询商户电表。
         rooms = [
             room
             for room in catalog["rooms"]
@@ -436,12 +430,10 @@ class ElectricityService:
     async def get_cached_room_reading(
         self, room_number: str, campus: str
     ) -> tuple[bool | None, dict[str, Any] | None]:
-        """Return a reading only from cache, without contacting the portal.
+        """仅从缓存返回读数，不访问平台。
 
-        The first tuple value is ``False`` for an invalid room, ``True`` for a
-        valid catalogued room, and ``None`` while the catalog itself is not
-        ready.  A valid room can temporarily have no reading while the daily
-        scheduled collection is still progressing.
+        元组首项 False 表示无效寝室，True 表示目录中有效寝室，None 表示目录尚未就绪。
+        当日定时采集尚未结束时，有效寝室也可能暂时没有读数。
         """
         catalog = self.get_room_catalog()
         if catalog is None:
@@ -459,7 +451,7 @@ class ElectricityService:
 
     @staticmethod
     def _resolve_catalog_campus(catalog: dict[str, Any], campus: str) -> str:
-        """Map English and Chinese campus aliases to the portal area ID."""
+        """将中英文校区别名映射为平台区域 ID。"""
         labels = {
             "hanpu": "含浦",
             "含浦": "含浦",
@@ -482,10 +474,9 @@ class ElectricityService:
     async def needs_today_collection(
         self, *, scheduled_time: time = time(5, 30)
     ) -> bool:
-        """Return whether any current-day reading is missing after settlement.
+        """判断结算后是否仍有当天读数缺失。
 
-        This is used on process startup: a restart after the scheduled time
-        should repair a missing or incomplete daily cache.
+        用于进程启动时恢复，确保定时采集时间之后重启也能补齐缺失或不完整的日缓存。
         """
         timezone_name = os.getenv("ELECTRICITY_CACHE_TIMEZONE", "Asia/Shanghai")
         now = datetime.now(ZoneInfo(timezone_name))
@@ -507,12 +498,10 @@ class ElectricityService:
         return False
 
     def daily_collection_status(self) -> dict[str, Any]:
-        """Return progress for today's scheduled full-room collection.
+        """返回当天定时全寝室采集进度。
 
-        The server uses this lightweight status rather than probing every room
-        while the crawler is still filling its daily cache.  ``completed``
-        means every room in the scheduled pass has been queried; individual
-        failed rooms may still be handled by the crawler retry job.
+        服务端通过此轻量状态等待爬虫填充日缓存，避免逐间探测。
+        completed 表示本轮已查询全部寝室，个别失败项仍可能由补采任务继续处理。
         """
         state = self._read_collection_state()
         today = self._collection_date()
@@ -546,11 +535,9 @@ class ElectricityService:
         force: bool = False,
         retry_missing: bool = False,
     ) -> dict[str, int]:
-        """Collect daily readings, optionally retrying only cache misses.
+        """采集日电量，可选择仅补采缓存缺失项。
 
-        ``force`` is for the first daily scan: it deliberately refreshes every
-        reading after settlement.  Retry jobs must not use it, otherwise a
-        single unavailable meter causes the whole catalog to be queried again.
+        force 用于结算后的首轮全量刷新；补采任务不能启用，避免单个电表不可用触发全目录重查。
         """
         if batch_size < 1 or interval_seconds <= 0 or jitter_seconds < 0:
             raise ValueError("电费采集计划参数无效")
@@ -570,9 +557,7 @@ class ElectricityService:
             ]
             catalog_total = len(rooms)
             if retry_missing:
-                # Cached rooms already have today's immutable snapshot.  Keep
-                # retries small and avoid putting avoidable pressure on the
-                # finance platform.
+                # 已缓存寝室已有当天不可变快照，重试仅补采缺失项，减少财务平台压力。
                 rooms = [
                     room
                     for room in rooms
@@ -589,9 +574,7 @@ class ElectricityService:
                 else 0
             )
             if force or retry_missing:
-                # Retry targets are a dynamic subset, so a checkpoint from
-                # the full scan must never skip them.  Retry progress is not
-                # persisted; a later retry safely rechecks remaining misses.
+                # 重试目标是动态子集，不能使用全量扫描断点跳过；不持久化重试进度，后续重新检查缺失项。
                 next_index = 0
             next_index = min(max(0, next_index), len(rooms))
             succeeded = 0
@@ -630,10 +613,8 @@ class ElectricityService:
                         }
                     )
             if retry_missing:
-                # Cached rooms have already been collected. Every missing room
-                # was attempted in this pass, so publish the full-catalog status
-                # even when startup had no checkpoint. Never persist an index
-                # into the dynamic retry subset.
+                # 缓存项已采集，本轮已尝试全部缺失寝室；即使无启动断点也须发布完整目录状态。
+                # 不能持久化动态重试子集的索引。
                 self._write_collection_state(
                     {
                         "date": collection_date,
@@ -651,7 +632,7 @@ class ElectricityService:
             return {"succeeded": succeeded, "failed": failed}
 
     async def resume_today_collection(self) -> dict[str, int] | None:
-        """Resume an interrupted daily scan after a process restart."""
+        """进程重启后恢复被中断的当日扫描。"""
         state = self._read_collection_state()
         if state is None or state.get("date") != self._collection_date():
             return None
@@ -714,9 +695,8 @@ class ElectricityService:
                 catalog_file.write("\n")
             os.replace(temporary_path, self.catalog_path)
         except OSError:
-            # Discovery succeeded, so keep serving live queries even if an
-            # optional local catalog cannot be persisted.
+            # 发现目录成功后，即使可选的本地目录保存失败，也须继续提供实时查询。
             return
 
 
-# TODO(SQLite): replace the internal JSON account file with SQLite persistence.
+# TODO(SQLite): 将内部 JSON 账户文件迁移至 SQLite。

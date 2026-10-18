@@ -1,28 +1,17 @@
-# utils/log.py
-
 from loguru import logger
 import sys
 from pathlib import Path
 
-# ----------------------------
-# 日志配置
-# ----------------------------
 
-# 移除默认的 handler（控制台输出），我们将自定义
 logger.remove()
 
 # 项目根目录（log.py 在 utils 目录下）
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# 日志文件目录
 LOGS_DIR = PROJECT_ROOT / "logs"
 LOGS_DIR.mkdir(exist_ok=True)  # 确保 logs 目录存在
 
-# ----------------------------
-# 添加 Handler
-# ----------------------------
 
-# 控制台 Handler
 logger.add(
     sink=sys.stdout,
     level="DEBUG",
@@ -62,8 +51,5 @@ logger.add(
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
 )
 
-# ----------------------------
-# 导出配置好的 logger
-# ----------------------------
 
 __all__ = ["logger"]

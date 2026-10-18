@@ -9,7 +9,6 @@ def safe_float(
     if value is None:
         return default
     try:
-        # 去掉首尾空格
         value = value.strip() if isinstance(value, str) else value
         # 如果以 % 结尾，去掉 % 并除以 100
         if isinstance(value, str) and value.endswith("%"):

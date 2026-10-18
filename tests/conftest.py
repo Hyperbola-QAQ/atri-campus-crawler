@@ -4,7 +4,7 @@ import pytest
 
 
 def pytest_collection_modifyitems(items):
-    """Keep tests that use live external services opt-in."""
+    """仅显式启用时运行访问真实外部服务的测试。"""
     hnucm_enabled = os.getenv("RUN_HNUCM_INTEGRATION_TESTS") == "1"
     infrastructure_enabled = os.getenv("RUN_INFRA_INTEGRATION_TESTS") == "1"
     electricity_live_enabled = os.getenv("RUN_ELECTRICITY_LIVE_TESTS") == "1"

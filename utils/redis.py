@@ -1,4 +1,4 @@
-"""Redis client configured directly from the process environment."""
+"""直接从进程环境配置的 Redis 客户端。"""
 
 import os
 
@@ -12,7 +12,7 @@ _REDIS_CLIENT: redis.Redis | None = None
 
 
 async def close_redis_client() -> None:
-    """Release the owned connection pool on application shutdown."""
+    """应用关闭时释放所持有的连接池。"""
     global _REDIS_CLIENT
     client, _REDIS_CLIENT = _REDIS_CLIENT, None
     if client is not None:
@@ -20,13 +20,13 @@ async def close_redis_client() -> None:
 
 
 def reset_redis_client_for_tests() -> None:
-    """Reset the shared client after a test closes it."""
+    """测试关闭共享客户端后将其重置。"""
     global _REDIS_CLIENT
     _REDIS_CLIENT = None
 
 
 async def get_redis_client() -> redis.Redis:
-    """Return a shared Redis client using REDIS_* environment settings."""
+    """根据 REDIS_* 环境配置返回共享 Redis 客户端。"""
     global _REDIS_CLIENT
     if _REDIS_CLIENT is None:
         _REDIS_CLIENT = redis.Redis(

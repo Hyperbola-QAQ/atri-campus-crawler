@@ -1,4 +1,4 @@
-"""Opt-in integration test against the real electricity platform."""
+"""显式启用的真实电量平台集成测试。"""
 
 import pytest
 

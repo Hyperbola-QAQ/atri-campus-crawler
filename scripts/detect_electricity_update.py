@@ -1,9 +1,7 @@
-"""Observe one test dorm's live electricity reading and detect refresh times.
+"""观察测试寝室实时电量，检测平台刷新时间。
 
-Set ``ELECTRICITY_UPDATE_MONITOR_CAMPUS`` and
-``ELECTRICITY_UPDATE_MONITOR_ROOM_NUMBER`` before running.  The normal mode
-keeps running and samples at each :00 and :30.  Use ``--once`` when an
-external cron scheduler invokes the script every 30 minutes.
+运行前设置 ELECTRICITY_UPDATE_MONITOR_CAMPUS 和 ELECTRICITY_UPDATE_MONITOR_ROOM_NUMBER。
+默认持续运行，在每小时 :00 和 :30 采样；由外部 cron 每半小时调用时使用 --once。
 """
 
 import argparse
@@ -33,7 +31,7 @@ def _timezone() -> ZoneInfo:
 
 
 def _reading_fingerprint(reading: dict[str, Any]) -> str:
-    """Only compare fields that represent a finance-system meter reading."""
+    """仅比较代表财务系统电表读数的字段。"""
     observed = {
         key: reading.get(key)
         for key in (
@@ -71,10 +69,9 @@ def _write_state(path: Path, state: dict[str, Any]) -> None:
 
 
 def _suggest_cron(updates: list[dict[str, Any]]) -> str | None:
-    """Suggest a five-field cron after at least two observed changes.
+    """至少观察到两次变化后，建议五字段 cron 表达式。
 
-    A half-hour probe can identify the first observed half-hour bucket, not
-    the exact second at which the upstream platform refreshed its data.
+    半小时探测只能识别首次观察到变化的半小时时段，不能确定上游刷新的精确秒数。
     """
     timestamps: list[datetime] = []
     for update in updates:
@@ -124,7 +121,7 @@ async def observe_once(campus: str, room_number: str, state_path: Path) -> None:
         "balance": reading.get("balance"),
     }
     observations.append(observation)
-    # Keep enough history to audit a month's worth of half-hour probes.
+    # 保留一个月的半小时探测历史，便于审计。
     state["observations"] = observations[-1488:]
     current_reading = (
         f"剩余电量={reading.get('remaining_electricity')!s}，"

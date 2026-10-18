@@ -1,4 +1,4 @@
-"""Require statement and branch coverage independently of the combined score."""
+"""分别检查语句与分支覆盖率，避免综合分数掩盖不足。"""
 
 import json
 import sys

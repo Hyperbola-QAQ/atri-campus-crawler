@@ -157,7 +157,6 @@ class TestHNUCMAdapter:
             cookies=cookies, semester="2023-2024-2"
         )
 
-        # 断言
         assert xls_path.exists(), "xls 文件不存在"
         assert xls_path.is_file(), "xls_path 不是文件"
         assert xls_path.suffix == ".xls", "xls 文件后缀不是 .xls"

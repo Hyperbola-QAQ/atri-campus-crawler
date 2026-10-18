@@ -92,7 +92,7 @@ async def get_electricity_service(
 
 
 async def get_electricity_account_pool(school: School = "HNUCM"):
-    """Expose the pool storage independently from the query orchestration service."""
+    """独立提供账户池存储，不依赖查询编排服务。"""
     return (await get_electricity_service(school)).account_pool
 
 
@@ -114,7 +114,7 @@ async def get_crawl_academic_account_pool(request: CrawlRequest) -> AcademicAcco
 
 
 async def _initial_electricity_sync() -> None:
-    """Own startup recovery: resume the saved catalog, then fill cache misses."""
+    """启动时恢复已有目录，再补采缓存缺失项。"""
     service = await get_electricity_service()
     try:
         if await service.needs_today_collection():
@@ -199,7 +199,7 @@ async def list_electricity_accounts(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
     school: School = "HNUCM",
 ) -> ElectricityAccountListResponse:
-    """List account IDs. Passwords are never included in responses."""
+    """列出账户 ID，响应不包含密码。"""
     try:
         accounts = await account_pool.list_accounts()
         return ElectricityAccountListResponse(
@@ -389,7 +389,7 @@ async def get_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> dict[str, Any]:
-    """Return the most recent startup-discovered room catalog for all campuses."""
+    """返回启动时最近一次发现的全部校区寝室目录。"""
     catalog = service.get_room_catalog()
     if catalog is None:
         raise HTTPException(status_code=503, detail="寝室目录尚未同步完成")
@@ -404,7 +404,7 @@ async def refresh_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> dict[str, Any]:
-    """Immediately re-enumerate valid dorm rooms for every available campus."""
+    """立即重新枚举所有可用校区的有效寝室。"""
     try:
         return {**(await service.refresh_room_catalog()), "school": school}
     except AccountPoolConfigurationError as exc:
@@ -422,7 +422,7 @@ async def get_electricity_collection_status(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> ElectricityCollectionStatusResponse:
-    """Report whether today's scheduled all-room query has finished."""
+    """报告当天定时全寝室采集是否完成。"""
     return ElectricityCollectionStatusResponse(
         school=school, **service.daily_collection_status()
     )
@@ -474,7 +474,7 @@ async def get_electricity(
 async def _crawl_with_credentials(
     request: CrawlRequest, username: str, password: str
 ) -> tuple[CrawlResponse, bool]:
-    """Run one academic request and return whether its login succeeded."""
+    """执行一次教务请求，并返回登录是否成功。"""
     adapter_class = SCHOOL_ADAPTERS[request.school]
     adapter = adapter_class()
 
@@ -528,7 +528,7 @@ async def crawl(
 ) -> CrawlResponse:
     """提供教务查询；省略账号密码时使用独立的教务账号池。"""
     if request.username is not None:
-        assert request.password is not None  # enforced by CrawlRequest validation
+        assert request.password is not None  # 由 CrawlRequest 校验保证。
         result, _ = await _crawl_with_credentials(
             request, request.username, request.password
         )

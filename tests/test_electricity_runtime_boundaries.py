@@ -1,4 +1,4 @@
-"""Exercise real portal/session/cache types across service boundaries, offline."""
+"""离线验证跨服务边界的真实平台、会话与缓存类型。"""
 
 import json
 
@@ -12,7 +12,7 @@ from services.electricity_cache import DailyElectricityCache
 
 
 class ByteRedis:
-    """Redis-compatible bytes responses, shared across simulated processes."""
+    """兼容 Redis 的字节响应，由模拟进程共享。"""
 
     def __init__(self):
         self.values = {}
@@ -57,7 +57,7 @@ async def test_expired_http_session_reauthenticates_and_cache_survives_restart(
             or path == HNUCMElectricityClient.electricity_api_path
         )
         if request.headers.get("cookie") == "sid=expired":
-            # Production portals return HTML when a saved session has expired.
+            # 生产平台会在缓存会话过期时返回 HTML。
             return httpx.Response(200, text="<html>please login</html>")
         assert request.headers["cookie"] == "sid=fresh"
         assert request.headers["x-csrftoken"] == "fresh-csrf"
@@ -163,12 +163,12 @@ async def test_corrupt_redis_bytes_fall_back_to_independent_memory_snapshot():
 
 
 def test_portal_rsa_ciphertext_decrypts_to_utf8_pkcs1_password(monkeypatch):
-    """Check the wire ciphertext cryptographically, beyond length/nonplaintext."""
+    """通过密码学验证传输密文，而非仅检查长度或是否为明文。"""
     import base64
 
     from adapter.hnucm_adapter import electricity as module
 
-    # Known Mersenne primes give an offline RSA key; no production key/secret.
+    # 使用已知梅森素数构造离线 RSA 密钥，不涉及生产密钥或凭据。
     p, q = 2**521 - 1, 2**607 - 1
     modulus = p * q
     private_exponent = pow(65537, -1, (p - 1) * (q - 1))
