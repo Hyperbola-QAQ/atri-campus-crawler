@@ -1,3 +1,7 @@
+"""解析成绩主表并并发补充详情；单门详情失败仍保留主表课程。
+总成绩可能是中文等级，保留文本，不统一转浮点数。
+"""
+
 from typing import Dict, List, Optional, Any
 from httpx import Cookies
 import httpx
@@ -10,9 +14,12 @@ from utils.type import safe_float, safe_int
 
 
 class GradeCrawler:
+    """借用调用方登录 Cookie 查询成绩，不管理认证缓存。"""
+
     def __init__(
         self, base_url: str, headers: Optional[dict] = None, username: str = "unknown"
     ):
+        """保存抓取配置；username 仅用于日志，不证明 Cookie 身份。"""
         self.base_url = base_url
         self.headers = headers
         self.username = username
@@ -22,22 +29,11 @@ class GradeCrawler:
         cookies: Cookies,
         semester: str = "",
     ) -> List[GradeItem]:
-        """
-        从教务系统获取成绩信息
-
-        Args:
-            cookies (Cookies): 登录后的Cookies
-            semester (str, optional): 学期标识符
-            headers (Optional[dict], optional): 请求头信息
-            base_url (str): 教务系统基础URL
-            username (str): 用户名，用于日志标识
-
-        Returns:
-            List[GradeItem]: 成绩数据列表
+        """semester 符合 yyyy-yyyy-1/2 时筛选，否则查询全部成绩。
+        并发详情失败仅记录日志；主表网络或最终模型验证异常向上传播。
         """
         logger.debug(f"[{self.username}] 开始获取成绩信息，学期: {semester}")
 
-        # 页面参数：学期格式为 yyyy-yyyy-1 或 yyyy-yyyy-2
         if semester and re.fullmatch(r"^\d{4}-\d{4}-[12]$", semester):
             params = {"kksj": semester}
         else:
@@ -50,6 +46,7 @@ class GradeCrawler:
         logger.debug(f"[{self.username}] 获取详情页数据")
 
         async def _fetch_and_update(course, cookies):
+            """隔离单门详情异常，保留该课程主表字段。"""
             if not course.get("详情页链接"):
                 return
             try:
@@ -99,18 +96,9 @@ class GradeCrawler:
         return grade_items
 
     async def parse_main_page_html(self, html_content: str) -> List[Dict]:
-        """
-        解析主页面HTML内容
-
-        Args:
-            html_content: HTML字符串
-
-        Returns:
-            解析后的课程数据列表
-        """
+        """按既有十六列模板解析成绩，跳过列数不足的行。"""
         tree = etree.HTML(html_content)
 
-        # 根据HTML结构，先查找id为dataList的表格
         tables = tree.xpath('//table[@id="dataList"]')
         table = tables[0] if tables else None
 
@@ -118,7 +106,6 @@ class GradeCrawler:
             # 如果找不到，尝试查找任意包含成绩信息的表格
             all_tables = tree.xpath("//table")
             for t in all_tables:
-                # 查找表格中的th元素，检查是否包含'课程名称'
                 ths = t.xpath(".//th")
                 for th in ths:
                     if th.text and "课程名称" in th.text:
@@ -131,27 +118,22 @@ class GradeCrawler:
                 logger.warning(
                     f"[{self.username}] 未找到主页面表格，页面内容可能已更改"
                 )
-                # 尝试获取页面标题
                 title_elements = tree.xpath("//title")
                 title = title_elements[0].text if title_elements else "无标题"
                 logger.debug(f"[{self.username}] 页面标题: {title}")
                 return []
 
-        # 获取所有tr元素，跳过表头（第一个tr）
         rows = table.xpath("./tr")[1:] if table is not None else []
 
         course_data = []
         for row_index, row in enumerate(rows):
-            # 使用xpath获取所有td元素
             columns = row.xpath("./td")
-            if len(columns) < 16:  # 根据HTML结构，需要至少16列数据
+            if len(columns) < 16:
                 logger.warning(
-                    f"[{self.username}] 第 {row_index+1} 行数据列数不足，跳过"
+                    f"[{self.username}] 第 {row_index + 1} 行数据列数不足，跳过"
                 )
                 continue
 
-            # 提取基本信息，根据HTML表格结构调整列索引
-            # 提取成绩和详情页链接
             score_cell = columns[4]
             score_a_tag = (
                 score_cell.xpath(".//a")[0] if score_cell.xpath(".//a") else None
@@ -166,10 +148,9 @@ class GradeCrawler:
 
             if href:
                 # 数据示例{'href': "javascript:openWindow('/jsxsd/kscj/pscj_list.do?xs0************2C&zcj=84',700,500)"}
-                # 详情页末尾为成绩 TODO
+                # TODO(成绩解析): 核实详情页末尾的成绩格式。
                 score_match = re.search(r"zcj=([\u4e00-\u9fa5]+|\d+)", href)
                 score = score_match.group(1) if score_match else "N/A"
-                # 提取详情页链接
                 match = re.search(r"openWindow\('(.*?)'", href)
                 if match:
                     detail_link = match.group(1)
@@ -203,21 +184,9 @@ class GradeCrawler:
     async def fetch_main_page(
         self, params: Dict[str, str], cookies: Cookies
     ) -> List[Dict]:
-        """
-        获取主页面数据
-
-        Args:
-            base_url: 基础URL
-            params: 请求参数
-            cookies: Cookies对象
-            headers: 请求头
-            username: 用户名，用于日志标识
-
-        Returns:
-            解析后的课程数据列表
-        """
+        """请求并解析成绩主表；非 200 返回空列表，网络与解析异常向上传播。"""
         logger.debug(
-            f"[{self.username}] 请求成绩主页面: {self.base_url+'/jsxsd/kscj/cjcx_list'}"
+            f"[{self.username}] 请求成绩主页面: {self.base_url + '/jsxsd/kscj/cjcx_list'}"
         )
         async with httpx.AsyncClient(
             base_url=self.base_url, cookies=cookies, headers=self.headers
@@ -233,17 +202,9 @@ class GradeCrawler:
             return await self.parse_main_page_html(response.text)
 
     async def parse_detail_page_html(self, html_content: str) -> Dict[str, Any]:
-        """
-        解析详情页HTML内容
-
-        Args:
-            html_content: HTML字符串
-        Returns:
-            解析后的详情数据字典
-        """
+        """兼容 schedule_id 与 id 标记的详情表；缺表、缺行或列不足返回空字典。"""
         tree = etree.HTML(html_content)
 
-        # 修改表格查找逻辑，首先查找schedule_id，然后查找id
         tables = tree.xpath('//table[@schedule_id="dataList"]')
         table = tables[0] if tables else None
 
@@ -253,7 +214,6 @@ class GradeCrawler:
 
         if not tables:
             logger.warning(f"[{self.username}] 未找到详情页表格")
-            # 添加更多调试信息
             title_elements = tree.xpath("//title")
             title = title_elements[0].text if title_elements else "无标题"
             logger.debug(f"[{self.username}] 页面标题: {title}")
@@ -286,16 +246,7 @@ class GradeCrawler:
     async def fetch_detail_page(
         self, detail_url: str, cookies: Cookies
     ) -> Dict[str, Any]:
-        """
-        获取详情页数据
-
-        Args:
-            detail_url: 详情页相对URL
-            cookies: Cookies对象
-
-        Returns:
-            解析后的详情数据字典
-        """
+        """空链接或请求传输失败返回空字典，HTTP 状态及解析异常交由上层隔离。"""
         if not detail_url:
             logger.warning(f"[{self.username}] 详情页链接为空，跳过")
             return {}

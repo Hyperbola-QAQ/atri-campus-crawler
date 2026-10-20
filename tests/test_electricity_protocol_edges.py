@@ -1,4 +1,4 @@
-"""电费门户协议校验、失败响应和残缺目录测试。"""
+"""区分传输、JSON 与业务成功；短暂无数据仅有界重试，目录容错不能放宽目标身份。"""
 
 import json
 from unittest.mock import AsyncMock

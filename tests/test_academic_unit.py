@@ -1,4 +1,4 @@
-"""教务适配器和 HTML/Excel 异常输入的离线测试。"""
+"""临时文件与工作簿替身隔离下载，保留中文成绩及缺详情兼容，区分认证、动作失败和合法空结果。"""
 
 from datetime import date
 from types import SimpleNamespace
@@ -64,6 +64,7 @@ async def test_adapter_login(monkeypatch, fail):
     [(1, "2025-2026-1"), (6, "2025-2026-1"), (7, "2026-2027-2"), (12, "2026-2027-2")],
 )
 async def test_semester_clock(monkeypatch, month, expected):
+
     class Clock(date):
         @classmethod
         def today(cls):

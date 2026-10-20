@@ -1,3 +1,5 @@
+"""真实路由配合依赖覆盖，不连接学校；验证电量缓存未命中不登录，教务分开报告认证和动作失败。"""
+
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -29,6 +31,7 @@ def internal_api_test_token(monkeypatch):
 
 
 def override_electricity_service(service):
+
     async def override():
         return service
 
@@ -36,6 +39,7 @@ def override_electricity_service(service):
 
 
 def override_electricity_account_pool(pool):
+
     async def override():
         return pool
 
@@ -43,6 +47,7 @@ def override_electricity_account_pool(pool):
 
 
 def override_academic_account_pool(pool):
+
     async def override():
         return pool
 

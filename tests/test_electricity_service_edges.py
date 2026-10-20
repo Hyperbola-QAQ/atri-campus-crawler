@@ -1,4 +1,4 @@
-"""账号文件损坏、目录持久化及断点采集的边界测试。"""
+"""临时目录运行真实服务，仅替换外部边界；账户写入失败报错，公开目录和断点可降级。"""
 
 import json
 from datetime import datetime, time, timedelta
@@ -253,6 +253,7 @@ async def test_resume_no_work(service, mode):
 async def test_needs_collection_before_settlement_or_missing_catalog(
     service, monkeypatch
 ):
+
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -302,6 +303,7 @@ async def test_memory_cache_expiry_and_redis_set_failure(monkeypatch):
 
 @pytest.mark.parametrize("mode", ["before", "empty", "success", "error"])
 async def test_schedule_resume(monkeypatch, mode):
+
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):

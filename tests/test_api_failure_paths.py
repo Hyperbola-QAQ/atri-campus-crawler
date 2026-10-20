@@ -1,4 +1,4 @@
-"""HTTP 错误映射、启动清理及教务返回值测试。"""
+"""仅替换故障边界，路由负责错误映射；生命周期以事件同步，区分登录与数据动作失败。"""
 
 import asyncio
 from types import SimpleNamespace

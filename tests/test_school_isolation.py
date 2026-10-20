@@ -1,3 +1,5 @@
+"""同时验证内部学校隔离和公开 API 拒绝未适配学校；旧数据仅默认 HNUCM。"""
+
 import asyncio
 import json
 
@@ -43,6 +45,7 @@ async def test_account_crud_is_scoped_by_school_and_preserves_legacy(
 
 
 async def test_reading_cache_and_cookie_keys_include_school():
+
     class Redis:
         def __init__(self):
             self.values = {}

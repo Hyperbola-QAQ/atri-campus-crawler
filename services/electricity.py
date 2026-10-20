@@ -1,4 +1,6 @@
-"""宿舍电量查询编排与凭据轮换。"""
+"""编排电费账户、会话、日缓存与可恢复采集；公开结果不包含登录凭据。
+目录和断点可选持久化，账户写入失败则明确报错。
+"""
 
 import asyncio
 import hashlib
@@ -43,25 +45,32 @@ class AccountAlreadyExistsError(RuntimeError):
 
 @dataclass(frozen=True, repr=False)
 class ElectricityAccount:
+    """仅供内部使用的凭据对象，不进入 repr 或公共 API；学校参与缓存隔离。"""
+
     username: str = field(repr=False)
     password: str = field(repr=False)
     school: str = "HNUCM"
 
     @property
     def cache_key(self) -> str:
-        """生成不可逆缓存键，键中不保留凭据。"""
+        """按零字节分隔的学校、用户名、密码生成缓存指纹，凭据变化不复用旧会话。
+        仅用于内部寻址，不能作为公开密码验证结果。
+        """
         identity = f"{self.school}\0{self.username}\0{self.password}".encode("utf-8")
         return hashlib.sha256(identity).hexdigest()
 
 
 class ElectricityAccountPool:
-    """读取内部 JSON 账户列表并轮换使用顺序。"""
+    """按学校隔离记录，同一解析后路径在进程内共享写锁；不提供跨进程互斥。
+    写入保留其他学校，旧记录缺少 school 时归属 HNUCM。
+    """
 
     _file_locks: ClassVar[dict[str, asyncio.Lock]] = {}
 
     def __init__(
         self, path: str | Path, *, pool_name: str = "电费", school: str = "HNUCM"
     ):
+        """校验学校代码并按解析后路径共享锁，不读取账户文件。"""
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,31}", school):
             raise ValueError("学校代码格式无效")
         self.school = school
@@ -73,6 +82,7 @@ class ElectricityAccountPool:
         )
 
     def _read_accounts(self) -> list[ElectricityAccount]:
+        """读取本校候选凭据，无账户抛出配置异常，不调用其他学校账户。"""
         records = [
             record for record in self._read_records() if record["school"] == self.school
         ]
@@ -84,6 +94,9 @@ class ElectricityAccountPool:
         ]
 
     def _read_records(self, *, allow_missing: bool = False) -> list[dict[str, str]]:
+        """校验完整账户文档，任何坏记录均拒绝整份文件；错误正文不包含原始凭据。
+        用户名去外层空白、密码保留原值；缺省学校为 HNUCM，allow_missing 允许首次创建。
+        """
         if not self.path.is_file():
             if allow_missing:
                 return []
@@ -127,6 +140,9 @@ class ElectricityAccountPool:
         return validated_records
 
     def _write_records(self, records: list[dict[str, str]]) -> None:
+        """同目录临时文件 fsync 后原子替换，错误转为 AccountPoolConfigurationError。
+        调用方须持有共享锁并传入全部学校记录；finally 仅清理本次临时文件。
+        """
         temporary_path = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +166,7 @@ class ElectricityAccountPool:
                 temporary_path.unlink(missing_ok=True)
 
     async def list_accounts(self) -> list[str]:
-        """仅返回账户标识，密码不能离开此层。"""
+        """仅返回本校用户名，不返回密码；文件错误向上传播，不解释为空池。"""
         async with self._lock:
             return [
                 record["xh"]
@@ -159,6 +175,9 @@ class ElectricityAccountPool:
             ]
 
     async def add_account(self, username: str, password: str) -> None:
+        """在共享锁内按学校、用户名检查唯一性并追加，允许首次建文件。
+        输入格式由调用方校验；同校重复抛出 AccountAlreadyExistsError。
+        """
         async with self._lock:
             records = self._read_records(allow_missing=True)
             if any(
@@ -172,6 +191,9 @@ class ElectricityAccountPool:
     async def update_account(
         self, username: str, *, new_username: str | None, password: str | None
     ) -> str:
+        """锁内更新本校记录并返回最终用户名，None 保留对应原值。
+        目标缺失抛出 AccountNotFoundError，同校改名冲突抛出 AccountAlreadyExistsError。
+        """
         async with self._lock:
             records = self._read_records()
             index = next(
@@ -197,6 +219,7 @@ class ElectricityAccountPool:
             return records[index]["xh"]
 
     async def delete_account(self, username: str) -> None:
+        """锁内删除本校匹配记录，保留其他学校同名账户；未找到抛出 AccountNotFoundError。"""
         async with self._lock:
             records = self._read_records()
             new_records = [
@@ -209,6 +232,7 @@ class ElectricityAccountPool:
             self._write_records(new_records)
 
     async def rotated_accounts(self) -> list[ElectricityAccount]:
+        """每次重读凭据并在锁内推进本实例轮换起点；返回全部本校候选以供失败轮换。"""
         accounts = self._read_accounts()
         async with self._lock:
             start = self._next_index % len(accounts)
@@ -217,14 +241,14 @@ class ElectricityAccountPool:
 
 
 class AcademicAccountPool(ElectricityAccountPool):
-    """教务系统独立使用的轮换凭据池。"""
+    """独立教务池复用文件格式；调用方须使用独立路径，不与电量登录会话混用。"""
 
     def __init__(self, path: str | Path, *, school: str = "HNUCM"):
         super().__init__(path, pool_name="教务", school=school)
 
 
 class ElectricityService:
-    """按轮换顺序尝试配置的账户并返回电表数据。"""
+    """按账户池学校隔离缓存与文件，目录刷新和读数采集分别由实例锁防止重入。"""
 
     def __init__(
         self,
@@ -234,6 +258,9 @@ class ElectricityService:
         cookie_cache: InMemoryCookieCache | None = None,
         reading_cache: DailyElectricityCache | None = None,
     ):
+        """注入客户端与缓存，不登录或采集；环境路径为空时禁用对应持久化。
+        HNUCM 保留旧文件名，其他学校加学校后缀隔离。
+        """
         self.school = account_pool.school
         self.base_url = base_url
         self.account_pool = account_pool
@@ -260,6 +287,7 @@ class ElectricityService:
         self._collection_lock = asyncio.Lock()
 
     def _school_path(self, path: str) -> Path | None:
+        """空路径禁用持久化，HNUCM 保留原路径，其他学校在扩展名前加学校后缀。"""
         if not path:
             return None
         value = Path(path)
@@ -271,6 +299,7 @@ class ElectricityService:
 
     @classmethod
     def from_environment(cls, school: str = "HNUCM") -> "ElectricityService":
+        """按学校建立账户池，使用现有 HNUCM 平台；不代表新增学校已有适配器支持。"""
         default_accounts_file = (
             Path(__file__).resolve().parent.parent
             / "config"
@@ -287,6 +316,9 @@ class ElectricityService:
     async def _query_account(
         self, account: ElectricityAccount, room_number: str, campus: str
     ) -> dict[str, Any]:
+        """优先复用凭据隔离会话，失败清缓存后仅重登一次，成功同步保存 Cookie/CSRF。
+        重登失败向上传播，由 query_live 轮换账户。
+        """
         client = self.client_factory(self.base_url)
         cached_session = await self.cookie_cache.get(account.cache_key)
         if cached_session is not None:
@@ -299,7 +331,6 @@ class ElectricityService:
                     session=cached_session,
                 )
             except Exception:
-                # 缓存的平台会话可能已过期，清除后重新登录一次。
                 await self.cookie_cache.delete(account.cache_key)
             else:
                 await self.cookie_cache.set(account.cache_key, session)
@@ -316,6 +347,9 @@ class ElectricityService:
         return result
 
     async def query(self, room_number: str, campus: str) -> dict[str, Any]:
+        """规范寝室身份后读日缓存，未命中访问平台并缓存成功结果。
+        此路径可联网，只读 API 应使用 get_cached_room_reading。
+        """
         room_number = normalize_room_number(room_number)
         cached_result = await self.reading_cache.get(campus, room_number)
         if cached_result is not None:
@@ -326,9 +360,8 @@ class ElectricityService:
         return result
 
     async def query_live(self, room_number: str, campus: str) -> dict[str, Any]:
-        """直接读取平台当前电表值，不使用日缓存。
-
-        此接口独立于 query，使运维监测在日缓存已填充后仍能观察财务系统刷新。
+        """绕过日缓存轮换账户，仍可复用 Cookie，成功补 UTC 采集时间。
+        失败清除对应会话，最终只暴露平台安全错误或固定提示，不泄露账户和网络异常。
         """
         if not self.base_url:
             raise AccountPoolConfigurationError("未配置电费平台地址")
@@ -345,7 +378,6 @@ class ElectricityService:
                 platform_error = exc
                 await self.cookie_cache.delete(account.cache_key)
             except Exception:
-                # 日志和 API 输出不能附带异常原文或账户身份。
                 await self.cookie_cache.delete(account.cache_key)
                 continue
 
@@ -354,10 +386,8 @@ class ElectricityService:
         raise ElectricityQueryError("电费查询失败，请检查账号池或稍后重试")
 
     async def refresh_room_catalog(self) -> dict[str, Any]:
-        """登录一次并持久化平台完整的可选宿舍目录。
-
-        目录不含凭据、Cookie、电表读数或平台房间 ID，可安全提供给调用方，
-        供客户端在查表前发现有效的校区与寝室组合。
+        """锁内轮换账户发现目录并复用会话；公开目录不含凭据、余额或私有房间 ID。
+        本地保存失败可降级，所有账户发现失败抛出 ElectricityQueryError。
         """
         if not self.base_url:
             raise AccountPoolConfigurationError("未配置电费平台地址")
@@ -394,7 +424,9 @@ class ElectricityService:
         raise ElectricityQueryError("寝室目录同步失败，请检查账号池或稍后重试")
 
     def get_room_catalog(self) -> dict[str, Any] | None:
-        """读取最近一次成功同步的公开寝室目录。"""
+        """缺失、损坏或学校不符返回 None；读取旧目录也过滤商户，防止采集商户电表。
+        按楼栋和寝室重建标准身份，无法识别但带选择项的记录移除 room_number。
+        """
         if self.catalog_path is None or not self.catalog_path.is_file():
             return None
         try:
@@ -408,7 +440,6 @@ class ElectricityService:
             or not isinstance(catalog.get("rooms"), list)
         ):
             return None
-        # 旧版目录可能包含商户区域，读取缓存时也须过滤，防止定时采集查询商户电表。
         rooms = [
             room
             for room in catalog["rooms"]
@@ -430,10 +461,8 @@ class ElectricityService:
     async def get_cached_room_reading(
         self, room_number: str, campus: str
     ) -> tuple[bool | None, dict[str, Any] | None]:
-        """仅从缓存返回读数，不访问平台。
-
-        元组首项 False 表示无效寝室，True 表示目录中有效寝室，None 表示目录尚未就绪。
-        当日定时采集尚未结束时，有效寝室也可能暂时没有读数。
+        """仅查目录和日缓存，不登录平台；校区别名先解析为目录 ID。
+        首项 None 表示目录未就绪，False 表示无此寝室，True 表示有效但读数仍可能为空。
         """
         catalog = self.get_room_catalog()
         if catalog is None:
@@ -451,7 +480,7 @@ class ElectricityService:
 
     @staticmethod
     def _resolve_catalog_campus(catalog: dict[str, Any], campus: str) -> str:
-        """将中英文校区别名映射为平台区域 ID。"""
+        """仅含浦、东塘别名按目录名称解析，未知或未匹配时保留输入供后续身份检查。"""
         labels = {
             "hanpu": "含浦",
             "含浦": "含浦",
@@ -474,9 +503,8 @@ class ElectricityService:
     async def needs_today_collection(
         self, *, scheduled_time: time = time(5, 30)
     ) -> bool:
-        """判断结算后是否仍有当天读数缺失。
-
-        用于进程启动时恢复，确保定时采集时间之后重启也能补齐缺失或不完整的日缓存。
+        """结算前返回 False，结算后目录缺失或首个有效寝室缺读数则返回 True。
+        只查目录与缓存，不触发登录或查表。
         """
         timezone_name = os.getenv("ELECTRICITY_CACHE_TIMEZONE", "Asia/Shanghai")
         now = datetime.now(ZoneInfo(timezone_name))
@@ -498,10 +526,8 @@ class ElectricityService:
         return False
 
     def daily_collection_status(self) -> dict[str, Any]:
-        """返回当天定时全寝室采集进度。
-
-        服务端通过此轻量状态等待爬虫填充日缓存，避免逐间探测。
-        completed 表示本轮已查询全部寝室，个别失败项仍可能由补采任务继续处理。
+        """读取当日断点进度，缺失或过期返回零；非法计数归零并限制 queried 不超过 total。
+        completed 仅表示所有目标已尝试，不保证每间寝室有读数。
         """
         state = self._read_collection_state()
         today = self._collection_date()
@@ -535,9 +561,10 @@ class ElectricityService:
         force: bool = False,
         retry_missing: bool = False,
     ) -> dict[str, int]:
-        """采集日电量，可选择仅补采缓存缺失项。
-
-        force 用于结算后的首轮全量刷新；补采任务不能启用，避免单个电表不可用触发全目录重查。
+        """实例锁内串行处理有界批次，普通模式复用日缓存并恢复同日全量断点。
+        force 刷新全部，retry_missing 只补缺失，两者互斥；批量和间隔须为正，抖动非负。
+        按单调时钟计算批次目标时刻，已知查询错误仅计失败；每批保存全量索引。
+        动态补采子集不存索引，结束仅标记全部目标已尝试；返回计数仅覆盖本次处理。
         """
         if batch_size < 1 or interval_seconds <= 0 or jitter_seconds < 0:
             raise ValueError("电费采集计划参数无效")
@@ -574,7 +601,6 @@ class ElectricityService:
                 else 0
             )
             if force or retry_missing:
-                # 重试目标是动态子集，不能使用全量扫描断点跳过；不持久化重试进度，后续重新检查缺失项。
                 next_index = 0
             next_index = min(max(0, next_index), len(rooms))
             succeeded = 0
@@ -613,8 +639,6 @@ class ElectricityService:
                         }
                     )
             if retry_missing:
-                # 缓存项已采集，本轮已尝试全部缺失寝室；即使无启动断点也须发布完整目录状态。
-                # 不能持久化动态重试子集的索引。
                 self._write_collection_state(
                     {
                         "date": collection_date,
@@ -632,7 +656,9 @@ class ElectricityService:
             return {"succeeded": succeeded, "failed": failed}
 
     async def resume_today_collection(self) -> dict[str, int] | None:
-        """进程重启后恢复被中断的当日扫描。"""
+        """仅恢复同日、目录存在且未完成的全量断点，否则返回 None。
+        走普通采集，不强制重查；剩余缺失由补采处理。
+        """
         state = self._read_collection_state()
         if state is None or state.get("date") != self._collection_date():
             return None
@@ -646,10 +672,12 @@ class ElectricityService:
         return await self.collect_room_readings()
 
     def _collection_date(self) -> str:
+        """沿用日缓存时区生成断点日期，避免跨日恢复错误扫描。"""
         timezone_name = os.getenv("ELECTRICITY_CACHE_TIMEZONE", "Asia/Shanghai")
         return datetime.now(ZoneInfo(timezone_name)).date().isoformat()
 
     def _read_collection_state(self) -> dict[str, Any] | None:
+        """缺失、损坏或学校不符返回 None，旧文件默认 HNUCM；日期和计数由调用方检查。"""
         if (
             self.collection_state_path is None
             or not self.collection_state_path.is_file()
@@ -667,6 +695,7 @@ class ElectricityService:
         )
 
     def _write_collection_state(self, state: dict[str, Any]) -> None:
+        """附加学校后替换可选断点文件，I/O 失败忽略，重启可能重复尝试已有缓存目标。"""
         state = {**state, "school": self.school}
         if self.collection_state_path is None:
             return
@@ -683,6 +712,7 @@ class ElectricityService:
             return
 
     def _write_room_catalog(self, catalog: dict[str, Any]) -> None:
+        """临时文件原子替换可选目录；I/O 失败不推翻实时发现结果。"""
         if self.catalog_path is None:
             return
         try:
@@ -695,7 +725,6 @@ class ElectricityService:
                 catalog_file.write("\n")
             os.replace(temporary_path, self.catalog_path)
         except OSError:
-            # 发现目录成功后，即使可选的本地目录保存失败，也须继续提供实时查询。
             return
 
 

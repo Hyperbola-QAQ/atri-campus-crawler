@@ -1,3 +1,5 @@
+"""固定北京时间九点且缓存身份有效，将拒绝原因限定为采集时刻的时区和结算边界。"""
+
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -21,6 +23,7 @@ import main
 async def test_daily_api_rejects_unsettled_old_future_and_invalid_readings(
     monkeypatch, collected
 ):
+
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -46,6 +49,7 @@ async def test_daily_api_rejects_unsettled_old_future_and_invalid_readings(
 
 
 async def test_daily_api_preserves_actual_settled_collection_time(monkeypatch):
+
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):

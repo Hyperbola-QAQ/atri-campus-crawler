@@ -1,4 +1,4 @@
-"""教务认证的离线协议、重试和缓存回归测试。"""
+"""离线 HTTP/Redis 替身验证 encoded 协议及凭据隔离，不能用旧 Cookie 代替强制验证。"""
 
 from datetime import datetime
 from unittest.mock import AsyncMock
@@ -42,6 +42,7 @@ async def test_wrong_password_cannot_reuse_another_credentials_cookie(monkeypatc
     [(0, 54, False), (0, 55, True), (7, 5, True), (7, 6, False), (23, 59, False)],
 )
 def test_maintenance_boundaries(monkeypatch, hour, minute, expected):
+
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):

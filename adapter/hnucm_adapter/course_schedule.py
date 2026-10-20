@@ -1,3 +1,5 @@
+"""按打印 Excel 模板解析，星期来自 B—H 列，学期来自标题；抓取路径负责临时文件清理。"""
+
 from typing import Dict, List, Any
 from httpx import Cookies
 from pathlib import Path
@@ -11,11 +13,8 @@ import tempfile
 
 
 async def get_current_semester() -> str:
-    """
-    获取期望获取的学期，格式为 yyyy-yyyy-1 或 yyyy-yyyy-2
-
-    例如：2023 年 7 月 1 日 至 2024 年 1 月 15 日 期望获取 2023-2024-2
-    2024 年 1 月 16 日 至 2024 年 6 月 30 日 期望获取 2024-2025-1
+    """沿用本地日期的月份规则：7—12 月为本年起始学年第二学期，1—6 月为上一学年第一学期。
+    不读取校历，与 server 的日级学期边界不同。
     """
     today = datetime.date.today()
     year = today.year
@@ -23,15 +22,12 @@ async def get_current_semester() -> str:
         # 7 月 1 日及以后，返回当前学年-下一学年-2
         return f"{year}-{year + 1}-2"
     else:
-        # 1 月 16 日至 6 月 30 日，返回上一学年-当前学年-1
+        # 一月至六月按现有月份规则使用上一学年的第一学期。
         return f"{year - 1}-{year}-1"
 
 
 async def parse_weeks_to_list(week_str: str) -> List[int]:
-    """
-    解析周次字符串为周次列表
-    支持格式: "1-11", "19", "1-9,11", "1-3,5-7,9-10,12-13,15-16" 等
-    """
+    """展开逗号和闭区间，保留输入顺序及重复；非法数字抛错，不推断单双周。"""
     weeks = []
 
     if "," in week_str:
@@ -52,9 +48,7 @@ async def parse_weeks_to_list(week_str: str) -> List[int]:
 
 
 async def parse_periods_to_list(class_period: str) -> List[int]:
-    """
-    解析节次为列表
-    """
+    """连字符仅分隔已列节号，1-3 返回第一、三节，不展开区间；无法识别部分忽略。"""
     periods = []
     period_str = class_period.replace("节", "")
 
@@ -70,19 +64,12 @@ async def parse_periods_to_list(class_period: str) -> List[int]:
 
 
 async def parse_course_block(lines: List[str]) -> Dict[str, Any]:
-    """
-    解析单个课程块信息
+    """按尾部地点、时间及可选教师解析，课程名取前一或两行；不足两行抛 ValueError。
+    教师分组文字保留，无时间匹配则周次、节次为空，不猜数字排课。
     """
     if len(lines) < 2:
         raise ValueError("课程解析出错")
 
-    # 倒数统计
-    # -1是地点
-    # -2是时间
-    # -3是教师（可能不存在）
-    # 剩下的是课程名
-
-    # 倒数第一行是地点
     location = (
         lines[-1]
         .replace("教室", "")
@@ -91,14 +78,11 @@ async def parse_course_block(lines: List[str]) -> Dict[str, Any]:
         .replace("济世楼", "济3")
     )
 
-    # 倒数第二行是时间信息（周次和节次）
     time_info = lines[-2]
 
-    # 提取周次信息
     week_match = re.search(r"([\d\-,\s]+)\(?周?\)?", time_info)
     week_list = week_match.group(1) if week_match else ""
 
-    # 提取节次信息
     period_match = re.search(r"\[(\d+(?:-\d+)*节)]", time_info)
     class_period = period_match.group(1) if period_match else ""
 
@@ -126,7 +110,6 @@ async def parse_course_block(lines: List[str]) -> Dict[str, Any]:
         # 行数小于3的情况，标记为未知教师
         teacher_name = "未知教师"
 
-    # 课程名是除了最后两行（时间、地点）和可能的教师行之外的所有行
     course_name_lines = lines[:1] if len(lines) <= 4 else lines[:2]
     course_name = "".join(course_name_lines)
 
@@ -145,16 +128,11 @@ async def parse_course_block(lines: List[str]) -> Dict[str, Any]:
 
 
 async def parse_cell_content(content: str) -> list[Dict[str, Any]]:
-    """
-    解析单元格中的课程内容
-    每个单元格可能包含多门课程，用两个换行符分隔
-    """
+    """按空行拆块并合并相邻不足三行的片段，完整块保持独立；空白返回空列表。"""
     courses = []
 
-    # 按两个或多个换行符分割不同的课程
     course_blocks = re.split(r"\n{2,}", content.strip())
 
-    # 合并处理lines长度小于3的情况
     merged_blocks = []
     i = 0
     while i < len(course_blocks):
@@ -167,7 +145,6 @@ async def parse_cell_content(content: str) -> list[Dict[str, Any]]:
         if len(lines) < 3:
             merged_content = course_blocks[i]
             i += 1
-            # 继续检查后续块是否也需要合并
             while i < len(course_blocks):
                 if not course_blocks[i].strip():
                     i += 1
@@ -178,11 +155,9 @@ async def parse_cell_content(content: str) -> list[Dict[str, Any]]:
                     if line.strip()
                 ]
                 if len(next_lines) < 3:
-                    # 如果下一个块也小于3行，则合并
                     merged_content += "\n\n" + course_blocks[i]
                     i += 1
                 else:
-                    # 如果下一个块正常，则停止合并
                     break
             merged_blocks.append(merged_content)
         else:
@@ -205,6 +180,8 @@ async def parse_cell_content(content: str) -> list[Dict[str, Any]]:
 
 
 class CourseScheduleCrawler:
+    """借用登录 Cookie，学期以文件标题为准；抓取路径清理文件，单独解析不删除调用方输入。"""
+
     def __init__(
         self,
         base_url: str,
@@ -220,9 +197,10 @@ class CourseScheduleCrawler:
         self.username = username
 
     async def fetch_course_schedule_xls(self, semester: str, cookies: Cookies) -> Path:
-        """从教务系统获取课表 Excel 文件"""
+        """下载到独立系统临时文件，由调用方删除；非空非法学期回退月份规则。
+        调用方须传非空学期，下载异常转 ValueError；不修正既有空参数行为。
+        """
 
-        # 页面参数：学期格式为 yyyy-yyyy-1 或 yyyy-yyyy-2
         if semester:
             if re.fullmatch(r"^\d{4}-\d{4}-[12]$", semester):
                 params = {"xnxq01id": semester}
@@ -240,7 +218,6 @@ class CourseScheduleCrawler:
 
             response.raise_for_status()
 
-            # 每次请求独立使用系统临时文件，避免目录缺失及并发覆盖。
             with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
                 xls_path = Path(f.name)
                 f.write(response.content)
@@ -255,7 +232,9 @@ class CourseScheduleCrawler:
             raise ValueError(f"[{self.username}] 获取课表失败：{e}")
 
     async def parse_course_schedule_xls(self, xls_path: Path) -> List[Dict[str, Any]]:
-        """解析课程表 Excel 文件"""
+        """按首张表八列模板解析第四行至倒数第二行，B—H 映射周一至周日。
+        第二行标题缺学期时标记未知，不以请求值冒充来源；格式或索引错误转 ValueError。
+        """
         try:
             logger.debug(f"[{self.username}] 解析课程表 {xls_path}")
             course_list: List[Dict[str, Any]] = []
@@ -275,10 +254,8 @@ class CourseScheduleCrawler:
             sheet = workbook.sheet_by_index(0)
             rows = [sheet.row_values(r) for r in range(sheet.nrows)]
 
-            # 从第二行第一列提取学年学期
             # 学年学期：2025-2026-1        班级：测试        专业：计算机科学与技术        院系：信息科学与工程学院        打印日期：2025-11-23
             first_row_text = str(rows[1][0]).strip()
-            # 使用正则提取“学年学期：”后的内容，直到遇到空格或制表符
             match = re.search(r"学年学期：([^\s]+)", first_row_text)
             if not match:
                 logger.warning(
@@ -286,16 +263,12 @@ class CourseScheduleCrawler:
                 )
             semester = match.group(1) if match else "未知学期"
 
-            # 检查至少有 8 列（A 到 H）
             if len(rows[0]) < 8:
                 raise ValueError(f"[{self.username}] 至少需要 8 列(A-H)")
 
-            # 获取目标行范围：第4行到倒数第2行（rows[3:-1]）
-            # 注意：iloc 是 0 起始，所以第4行是 iloc[3]，倒数第2行是 iloc[-2]
             target_rows = rows[3:-1]
 
             for idx, row in enumerate(target_rows):
-                # 遍历 B 到 H 列（位置索引 1 到 7）
                 for col_idx in range(1, 8):
                     cell_value = row[col_idx]
                     if not str(cell_value).strip() or cell_value is None:
@@ -321,7 +294,7 @@ class CourseScheduleCrawler:
     async def get_course_schedule_from_jwxt(
         self, semester: str, cookies: Cookies
     ) -> List[CourseScheduleItem]:
-        """从教务系统获取课表"""
+        """下载后解析无论成败都删除临时文件，再构造课程模型；异常向外传播。"""
 
         try:
             xls_path: Path = await self.fetch_course_schedule_xls(semester, cookies)

@@ -1,3 +1,5 @@
+"""不访问 Redis，以过期冷条目验证写入清理，避免仅 get 清理掩盖跨日滞留。"""
+
 from datetime import datetime, timedelta
 
 from services.electricity_cache import DailyElectricityCache

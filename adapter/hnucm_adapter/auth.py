@@ -1,3 +1,7 @@
+"""教务验证码登录及凭据隔离缓存；维护窗口与财务平台分别维护。
+缓存须探活，force_login 用于重新证明凭据；Redis 写入失败不推翻登录成功。
+"""
+
 import httpx
 import io
 import base64
@@ -19,6 +23,9 @@ _COOKIE_FINGERPRINT_KEY = secrets.token_bytes(32)
 
 
 def credential_cache_identity(base_url: str, username: str, password: str) -> str:
+    """以进程密钥 HMAC 隔离平台、用户名和密码，重启后指纹变化。
+    返回值包含用户名，仅用于内部定位；密钥不写入 Redis，避免无密钥离线猜测密码。
+    """
     payload = repr((base_url, username, password)).encode()
     fingerprint = hmac.new(_COOKIE_FINGERPRINT_KEY, payload, hashlib.sha256).hexdigest()
     return f"{username}:credential:{fingerprint}"
@@ -27,13 +34,8 @@ def credential_cache_identity(base_url: str, username: str, password: str) -> st
 async def save_cookies_to_redis(
     school_name: str, username: str, cookies: Cookies
 ) -> None:
-    """
-    将cookies保存到Redis中
-
-    Args:
-        school_name (str): 学校名称
-        username (str): 用户名
-        cookies (Cookies): HTTP cookies对象
+    """以学校和调用方身份保存 Cookie，TTL 为 1800 秒。
+    Redis 客户端不可用时跳过，序列化或写入失败转为 ValueError。
     """
     try:
         redis_client: Optional[Redis] = await get_redis_client()
@@ -103,7 +105,7 @@ async def get_cookies_from_jwxt(
                     code_response = await client.get("/verifycode.servlet")
                     img = io.BytesIO(code_response.content)
                     img = base64.b64encode(img.read()).decode()
-                    # 使用asyncio.to_thread执行同步的OCR操作
+                    # OCR 底层同步执行，此处沿用既有异步接口。
                     randomcode = await img2txt(img)
                     logger.debug(f"[{username}] 验证码识别成功: {randomcode}")
                     break  # 成功则跳出循环
@@ -229,9 +231,7 @@ async def get_cookies_from_redis(
 
 
 def is_in_maintenance_window() -> bool:
-    """
-    判断当前时间是否在00:55-07:05的维护窗口内
-    """
+    """判断上海时区的教务维护窗口（00:55 至 07:05，含端点）。"""
     now = datetime.now(ZoneInfo("Asia/Shanghai")).time()
     start = now.replace(hour=0, minute=55, second=0, microsecond=0)
     end = now.replace(hour=7, minute=5, second=0, microsecond=0)
@@ -248,26 +248,15 @@ async def get_valid_cookies(
     *,
     force_login: bool = False,
 ) -> Cookies:
-    """
-    获取有效的cookies，优先从缓存获取，如果缓存无效则重新登录获取
-
-    Args:
-        base_url (str): 基础URL
-        school_name (str): 学校名称
-        timeout (int): 超时时间
-        headers (dict): 请求头
-        username (str): 用户名
-        password (str): 密码
-
-    Returns:
-        Cookies: 有效的cookies对象
+    """维护窗口内拒绝查询；否则探活凭据隔离的缓存，失效后重新登录。
+    force_login 跳过缓存读取以验证当前密码；缓存写入失败仅记录日志。
+    登录失败转为 ValueError，缓存探活的网络异常向上传播。
     """
 
     if is_in_maintenance_window():
         logger.info("当前时间在教务系统维护窗口内，无法获取有效Cookie")
         raise ValueError("当前时间在教务系统维护窗口内，无法获取有效Cookie")
 
-    # 从base_url提取域名
     parsed_url = urlparse(base_url)
     domain = parsed_url.hostname or "jwxt.hnucm.edu.cn"
     cache_identity = credential_cache_identity(base_url, username, password)
@@ -294,7 +283,6 @@ async def get_valid_cookies(
                 response = await client.get("/jsxsd/framework/xsMain.htmlx#")
                 if response.status_code == 200 and "培养管理" in response.text:
                     logger.info(f"[{username}] 使用缓存Cookie登录成功！")
-                    # 如果cookie有效，则续约cookie过期时间
                     try:
                         await save_cookies_to_redis(
                             school_name, cache_identity, cookies

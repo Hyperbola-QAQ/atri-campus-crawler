@@ -27,11 +27,12 @@ from services.electricity import (  # noqa: E402
 
 
 def _timezone() -> ZoneInfo:
+    """显式 IANA 时区，默认北京时间；未知时区直接失败，不回退宿主时间。"""
     return ZoneInfo(os.getenv("ELECTRICITY_SCHEDULE_TIMEZONE", "Asia/Shanghai"))
 
 
 def _reading_fingerprint(reading: dict[str, Any]) -> str:
-    """仅比较代表财务系统电表读数的字段。"""
+    """固定电表字段排序哈希，忽略 collected_at，避免采集时间或键序变化误报刷新。"""
     observed = {
         key: reading.get(key)
         for key in (
@@ -47,6 +48,7 @@ def _reading_fingerprint(reading: dict[str, Any]) -> str:
 
 
 def _read_state(path: Path) -> dict[str, Any]:
+    """缺失、不可读或非对象状态返回空历史，补齐缺失列表，不校验已有列表内容。"""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -60,6 +62,7 @@ def _read_state(path: Path) -> dict[str, Any]:
 
 
 def _write_state(path: Path, state: dict[str, Any]) -> None:
+    """同目录临时 JSON 原子替换，供中断恢复，不注册系统调度。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_suffix(f"{path.suffix}.tmp")
     temporary_path.write_text(
@@ -69,9 +72,8 @@ def _write_state(path: Path, state: dict[str, Any]) -> None:
 
 
 def _suggest_cron(updates: list[dict[str, Any]]) -> str | None:
-    """至少观察到两次变化后，建议五字段 cron 表达式。
-
-    半小时探测只能识别首次观察到变化的半小时时段，不能确定上游刷新的精确秒数。
+    """至少两个可解析变化时刻且分钟一致才建议 cron，同小时固定，否则每小时。
+    只反映首次观察窗口，不证明实际刷新瞬间。
     """
     timestamps: list[datetime] = []
     for update in updates:
@@ -90,6 +92,9 @@ def _suggest_cron(updates: list[dict[str, Any]]) -> str | None:
 
 
 async def observe_once(campus: str, room_number: str, state_path: Path) -> None:
+    """绕过日缓存探测，首个成功值仅建立基准，已知查询失败保存失败记录以便后续继续。
+    保留最多 1488 次观测及各 100 次更新、失败；cron 仅建议，不修改调度。
+    """
     now = datetime.now(_timezone()).replace(second=0, microsecond=0)
     state = _read_state(state_path)
     try:
@@ -145,6 +150,7 @@ async def observe_once(campus: str, room_number: str, state_path: Path) -> None:
 
 
 def _next_half_hour(now: datetime) -> datetime:
+    """取严格未来整点或半点，清秒和微秒，避免重复立即探测。"""
     candidate = now.replace(second=0, microsecond=0)
     if candidate.minute < 30:
         return candidate.replace(minute=30)
@@ -152,6 +158,9 @@ def _next_half_hour(now: datetime) -> datetime:
 
 
 async def main() -> None:
+    """参数优先于环境，目标必须显式提供；--once 用于外部调度，否则进程内每半小时探测。
+    等待至少一秒避免忙循环，不自行安装调度任务。
+    """
     parser = argparse.ArgumentParser(description="每半小时探测测试寝室的电费刷新")
     parser.add_argument(
         "--once", action="store_true", help="只探测一次，供系统 cron 调用"

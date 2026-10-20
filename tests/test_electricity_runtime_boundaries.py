@@ -1,4 +1,6 @@
-"""离线验证跨服务边界的真实平台、会话与缓存类型。"""
+"""MockTransport 隔离真实客户端，字节 Redis 替身验证重建后缓存命中。
+深拷贝和实际 RSA 解密补足返回值断言。
+"""
 
 import json
 
@@ -12,7 +14,11 @@ from services.electricity_cache import DailyElectricityCache
 
 
 class ByteRedis:
-    """兼容 Redis 的字节响应，由模拟进程共享。"""
+    """存储 JSON 文本但按 Redis 默认行为返回字节的共享替身。
+
+    多个 DailyElectricityCache 实例使用同一 values，模拟进程重建后的共享存储。
+    set 要求正 TTL，但测试不在替身中重新实现 Redis 的完整过期算法。
+    """
 
     def __init__(self):
         self.values = {}
@@ -163,7 +169,13 @@ async def test_corrupt_redis_bytes_fall_back_to_independent_memory_snapshot():
 
 
 def test_portal_rsa_ciphertext_decrypts_to_utf8_pkcs1_password(monkeypatch):
-    """通过密码学验证传输密文，而非仅检查长度或是否为明文。"""
+    """通过离线私钥解密验证平台 RSA 密文的真实结构。
+
+    使用已知素数构造测试密钥，不读取任何部署公钥或私钥。
+    随机源故意提供零字节，填充必须过滤零值且至少八字节。
+    解密后检查 00 02 前缀、分隔零字节和 UTF-8 密码加 nonce。
+    这能发现 Base64 长度看似正确但密码编码或填充协议错误的实现。
+    """
     import base64
 
     from adapter.hnucm_adapter import electricity as module

@@ -1,3 +1,7 @@
+"""本地平台数据与 MockTransport 保留请求协议，临时账户、目录隔离部署凭据。
+采集缩短间隔但仍走实际批次和断点。
+"""
+
 import asyncio
 import json
 from datetime import datetime, time
@@ -50,6 +54,7 @@ def test_electricity_client_uses_hnucm_portal_by_default():
 
 @pytest.mark.asyncio
 async def test_room_option_business_error_includes_upstream_reason():
+
     async def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,

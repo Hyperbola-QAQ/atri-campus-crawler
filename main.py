@@ -1,3 +1,8 @@
+"""教务抓取及内部账户 API 仅用已注册学校；外层服务仍须按用户授权查询范围。
+电量请求只读目录与结算后日缓存，教务指定学号不轮换其他学生。
+应用拥有启动恢复和调度任务，退出先回收任务再关 Redis。
+"""
+
 import asyncio
 import logging
 import os
@@ -51,6 +56,10 @@ logger = logging.getLogger(__name__)
 
 
 class CrawlRequest(BaseModel):
+    """凭据须同时提供或省略用教务池，student_id 非空且须与显式用户名一致。
+    verify_credentials 要求新登录证明密码，动作和学校限注册范围。
+    """
+
     school: School = "HNUCM"
     action: Literal["login", "get_profile", "get_grades", "get_course_schedule"]
     username: str | None = Field(default=None, min_length=1)
@@ -60,6 +69,7 @@ class CrawlRequest(BaseModel):
 
     @model_validator(mode="after")
     def credentials_must_be_provided_together(self):
+        """检查凭据组合及目标一致性，不验证密码；省略可用池，空字符串由字段校验拒绝。"""
         if (self.username is None) != (self.password is None):
             raise ValueError("username 和 password 必须同时提供，或同时省略")
         student_id = self.params.get("student_id")
@@ -72,6 +82,10 @@ class CrawlRequest(BaseModel):
 
 
 class CrawlResponse(BaseModel):
+    """业务 success/failed 不等于 HTTP 校验状态；data 由执行层序列化。
+    error_code 缺失不输出，兼容旧调用方。
+    """
+
     school: School = "HNUCM"
     status: Literal["success", "failed"]
     data: Any = None
@@ -81,23 +95,25 @@ class CrawlResponse(BaseModel):
 
 @lru_cache(maxsize=None)
 def _cached_electricity_service(school: str = "HNUCM") -> ElectricityService:
-    """复用轮转器；账号文件在每次查询时读取且不会记录到日志。"""
+    """按学校复用服务及内存缓存，账户文件仍按查询重读，不缓存凭据证明。"""
     return ELECTRICITY_SERVICES[school].from_environment(school=school)
 
 
 async def get_electricity_service(
     school: School = "HNUCM",
 ) -> ElectricityService:
+    """按受支持 School 提供依赖，测试可注入离线服务。"""
     return _cached_electricity_service(school)
 
 
 async def get_electricity_account_pool(school: School = "HNUCM"):
-    """独立提供账户池存储，不依赖查询编排服务。"""
+    """复用采集服务的池与锁，内部对象须转换为无密码公开响应。"""
     return (await get_electricity_service(school)).account_pool
 
 
 @lru_cache(maxsize=None)
 def _cached_academic_account_pool(school: str = "HNUCM") -> AcademicAccountPool:
+    """按学校缓存独立教务池，环境可覆盖路径；构造不读取凭据，不复用电量默认文件。"""
     default_accounts_file = (
         FilePath(__file__).resolve().parent / "config" / "academic_accounts.json"
     )
@@ -106,15 +122,19 @@ def _cached_academic_account_pool(school: str = "HNUCM") -> AcademicAccountPool:
 
 
 async def get_academic_account_pool(school: School = "HNUCM") -> AcademicAccountPool:
+    """管理路由按查询学校取教务池，不依赖电量或目录初始化。"""
     return _cached_academic_account_pool(school)
 
 
 async def get_crawl_academic_account_pool(request: CrawlRequest) -> AcademicAccountPool:
+    """查询路由按正文学校取教务池，不固定默认学校。"""
     return _cached_academic_account_pool(request.school)
 
 
 async def _initial_electricity_sync() -> None:
-    """启动时恢复已有目录，再补采缓存缺失项。"""
+    """先恢复同日断点再刷新目录、仅补缺失；阶段失败不阻止后续阶段。
+    两次缺失检查遵循结算窗口，不因重启强制全量刷新。
+    """
     service = await get_electricity_service()
     try:
         if await service.needs_today_collection():
@@ -135,6 +155,9 @@ async def _initial_electricity_sync() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """应用持有唯一启动恢复任务，调度共用其句柄作屏障，不阻塞接收请求。
+    正常退出路径先停调度，再回收启动恢复，最后关闭 Redis。
+    """
     app.state.electricity_catalog_task = asyncio.create_task(
         _initial_electricity_sync()
     )
@@ -166,7 +189,9 @@ app = FastAPI(
 
 @app.middleware("http")
 async def require_internal_token(request: Request, call_next):
-    """仅允许持有部署时内部令牌的服务访问业务与账号池接口。"""
+    """教务、账户及手动目录刷新受内部 Bearer 保护；缺配置 503，完整认证不匹配 401。
+    常量时间比较，不从浏览器用户字段授予业务权限。
+    """
     protected_paths = (
         request.url.path == "/api/v1/academic"
         or request.url.path.startswith("/api/v1/electricity/accounts")
@@ -187,6 +212,7 @@ async def require_internal_token(request: Request, call_next):
 
 @app.get("/health", tags=["service"])
 async def health() -> dict[str, str]:
+    """仅存活，不探测平台、凭据或采集状态，不证明数据就绪。"""
     return {"status": "ok"}
 
 
@@ -199,7 +225,7 @@ async def list_electricity_accounts(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
     school: School = "HNUCM",
 ) -> ElectricityAccountListResponse:
-    """列出账户 ID，响应不包含密码。"""
+    """仅公开本校用户名，池配置错误 503，不将损坏文件伪装空列表。"""
     try:
         accounts = await account_pool.list_accounts()
         return ElectricityAccountListResponse(
@@ -224,6 +250,7 @@ async def create_electricity_account(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
     school: School = "HNUCM",
 ) -> ElectricityAccountResponse:
+    """正文学校须与查询一致；同校重复 409、存储错误 503，成功 201 不含密码。"""
     if request.school is not None and request.school != school:
         raise HTTPException(
             status_code=422, detail="请求体 school 与查询参数 school 不一致"
@@ -248,6 +275,9 @@ async def update_electricity_account(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
     school: School = "HNUCM",
 ) -> ElectricityAccountResponse:
+    """空更新或正文学校冲突为 422，省略字段保留；缺目标 404、重名 409、存储错误 503。
+    响应使用最终用户名，不回显密码。
+    """
     if request.xh is None and request.pwd is None:
         raise HTTPException(status_code=422, detail="至少提供 xh 或 pwd 之一")
     if request.school is not None and request.school != school:
@@ -277,6 +307,7 @@ async def delete_electricity_account(
     account_pool: ElectricityAccountPool = Depends(get_electricity_account_pool),
     school: School = "HNUCM",
 ) -> Response:
+    """仅删本校账户，成功 204、缺目标 404、存储错误 503，不跨学校按用户名删除。"""
     try:
         await account_pool.delete_account(username)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -295,6 +326,7 @@ async def list_academic_accounts(
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
     school: School = "HNUCM",
 ) -> AcademicAccountListResponse:
+    """仅列独立教务池用户名，配置错 503，不回退电量池或公开密码。"""
     try:
         accounts = await account_pool.list_accounts()
         return AcademicAccountListResponse(
@@ -319,6 +351,7 @@ async def create_academic_account(
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
     school: School = "HNUCM",
 ) -> AcademicAccountResponse:
+    """仅向查询学校教务池新增；正文学校冲突 422、重名 409、存储错 503，响应无密码。"""
     if request.school is not None and request.school != school:
         raise HTTPException(
             status_code=422, detail="请求体 school 与查询参数 school 不一致"
@@ -343,6 +376,7 @@ async def update_academic_account(
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
     school: School = "HNUCM",
 ) -> AcademicAccountResponse:
+    """未提交字段保留；空更新或学校冲突 422，缺目标 404、重名 409、存储错 503。"""
     if request.xh is None and request.pwd is None:
         raise HTTPException(status_code=422, detail="至少提供 xh 或 pwd 之一")
     if request.school is not None and request.school != school:
@@ -372,6 +406,7 @@ async def delete_academic_account(
     account_pool: AcademicAccountPool = Depends(get_academic_account_pool),
     school: School = "HNUCM",
 ) -> Response:
+    """独立教务池删除，成功 204、缺目标 404、存储错 503，不删电量同名账户。"""
     try:
         await account_pool.delete_account(username)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -389,7 +424,7 @@ async def get_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> dict[str, Any]:
-    """返回启动时最近一次发现的全部校区寝室目录。"""
+    """只读已保存宿舍目录，未就绪 503，不登录平台；响应学校及区域身份来自目录。"""
     catalog = service.get_room_catalog()
     if catalog is None:
         raise HTTPException(status_code=503, detail="寝室目录尚未同步完成")
@@ -404,7 +439,7 @@ async def refresh_electricity_rooms(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> dict[str, Any]:
-    """立即重新枚举所有可用校区的有效寝室。"""
+    """内部认证后主动发现平台目录；账户配置错 503、平台查询失败 502。"""
     try:
         return {**(await service.refresh_room_catalog()), "school": school}
     except AccountPoolConfigurationError as exc:
@@ -422,7 +457,7 @@ async def get_electricity_collection_status(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> ElectricityCollectionStatusResponse:
-    """报告当天定时全寝室采集是否完成。"""
+    """仅从断点读进度，不逐间查缓存；completed 表示尝试完成，不保证读数齐全。"""
     return ElectricityCollectionStatusResponse(
         school=school, **service.daily_collection_status()
     )
@@ -443,7 +478,10 @@ async def get_electricity(
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
 ) -> ElectricityResponse:
-    """从每日缓存读取电表信息，绝不在请求期间访问财务平台。"""
+    """只读规范寝室日缓存；无目录或未采集 503，无此寝室 404，不登录平台。
+    非空 collected_at 须带时区、为上海当天 05:30 后且不晚于当前；不符视为未采集。
+    缺失或空采集时间沿用旧缓存兼容，不伪造时间。
+    """
     room_number = normalize_room_number(room_number)
     catalogued, result = await service.get_cached_room_reading(room_number, campus)
     if catalogued is None:
@@ -474,7 +512,9 @@ async def get_electricity(
 async def _crawl_with_credentials(
     request: CrawlRequest, username: str, password: str
 ) -> tuple[CrawlResponse, bool]:
-    """执行一次教务请求，并返回登录是否成功。"""
+    """单账户执行，登录动作或强制证明须新登录；返回布尔值只表示登录是否成功。
+    登录成功后数据失败仍为 True，禁止借动作失败轮换其他学生；模型结果序列化为普通数据。
+    """
     adapter_class = SCHOOL_ADAPTERS[request.school]
     adapter = adapter_class()
 
@@ -526,7 +566,9 @@ async def crawl(
     request: CrawlRequest,
     account_pool: AcademicAccountPool = Depends(get_crawl_academic_account_pool),
 ) -> CrawlResponse:
-    """提供教务查询；省略账号密码时使用独立的教务账号池。"""
+    """显式凭据优先，否则独立教务池；指定学号仅限该账户，缺目标 404、池不可用 503。
+    无目标可轮换登录，一旦成功即返回该账户动作结果；全部登录失败为业务 failed。
+    """
     if request.username is not None:
         assert request.password is not None  # 由 CrawlRequest 校验保证。
         result, _ = await _crawl_with_credentials(
@@ -557,7 +599,7 @@ async def crawl(
 
 
 def main() -> None:
-    """运行 FastAPI HTTP 服务。"""
+    """仅直接运行时启动 Uvicorn；reload 只识别 true，非法端口转换直接失败。"""
     uvicorn.run(
         "main:app",
         host=os.getenv("API_HOST", "0.0.0.0"),

@@ -3,13 +3,10 @@ from typing import Optional
 
 
 class Profile(BaseModel):
-    # 所属院系
+    """资料结构不负责身份绑定；gender 允许 None，但构造时仍须提供。"""
+
     department: str
-    # 专业
     major: str
-    # 班级
     class_name: str
-    # 姓名
     name: str
-    # 性别（可选）
     gender: Optional[str]

@@ -1,10 +1,19 @@
+"""默认离线，Redis 快速失败替身截断网络。
+外部集成和 live 标记须显式开关，学校集成另需独立测试凭据。
+"""
+
 import os
 
 import pytest
 
 
 def pytest_collection_modifyitems(items):
-    """仅显式启用时运行访问真实外部服务的测试。"""
+    """根据标记与显式环境条件决定是否跳过外部依赖测试。
+
+    三个开关互相独立，不能因为开启学校测试就自动访问真实电量平台。
+    教务集成同时要求用户名与密码存在，缺一仍跳过。
+    只增加跳过标记，不执行平台登录或输出环境凭据。
+    """
     hnucm_enabled = os.getenv("RUN_HNUCM_INTEGRATION_TESTS") == "1"
     infrastructure_enabled = os.getenv("RUN_INFRA_INTEGRATION_TESTS") == "1"
     electricity_live_enabled = os.getenv("RUN_ELECTRICITY_LIVE_TESTS") == "1"
@@ -42,7 +51,12 @@ def pytest_collection_modifyitems(items):
 
 @pytest.fixture(autouse=True)
 def isolate_redis_for_offline_tests(monkeypatch, request):
-    """普通测试立即走缓存降级；真实 Redis 只由 infrastructure 测试访问。"""
+    """让普通测试中的 Redis get、set 和 setex 立即产生连接错误。
+
+    真实外部测试保留原连接能力，避免全局替身让集成测试假通过。
+    先清空共享客户端引用，防止上个用例残留的事件循环或配置泄漏。
+    此夹具不会启动 Redis 或修改用户系统服务。
+    """
     if (
         request.node.get_closest_marker("infrastructure")
         or request.node.get_closest_marker("integration")

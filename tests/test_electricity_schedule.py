@@ -1,3 +1,5 @@
+"""不等真实周期，验证计划时刻和任务清理；精确边界由 test_schedule_paths 补充。"""
+
 from datetime import datetime, time
 
 import pytest
@@ -15,6 +17,7 @@ from services.electricity_schedule import (
 
 @pytest.mark.asyncio
 async def test_schedule_starts_and_stops_all_background_jobs():
+
     class Service:
         async def resume_today_collection(self):
             return None
@@ -28,6 +31,7 @@ async def test_schedule_starts_and_stops_all_background_jobs():
 
 
 def test_schedule_calculates_future_daily_and_weekly_runs():
+
     class Service:
         pass
 
@@ -51,6 +55,7 @@ def test_financial_maintenance_window_and_daily_data_publication_time_are_fixed(
 
 
 def test_schedule_retries_collections_only_during_the_daytime_window():
+
     class Service:
         pass
 

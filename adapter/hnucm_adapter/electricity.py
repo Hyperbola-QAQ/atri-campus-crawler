@@ -1,4 +1,4 @@
-"""湖南中医药大学缴费平台宿舍电量接口客户端。"""
+"""湖南中医药大学缴费门户适配；账户轮换和缓存由服务层管理。"""
 
 import asyncio
 import json
@@ -18,7 +18,7 @@ class ElectricityPlatformError(RuntimeError):
 
 
 def _jsbn_hex_to_base64(value: str) -> str:
-    """匹配平台登录页使用的 jsbn hex2b64 转换。"""
+    """沿用平台 jsbn 的半字节分组，保留奇数长度输入的转换语义。"""
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     output: list[str] = []
     index = 0
@@ -41,7 +41,11 @@ def _jsbn_hex_to_base64(value: str) -> str:
 
 
 def encrypt_password(password: str, public_key_hex: str, random_string: str) -> str:
-    """以 RSA PKCS#1 v1.5 填充加密 password + random_string。"""
+    """按平台协议对 UTF-8 密码与随机串的直接拼接执行 RSA PKCS#1 v1.5。
+
+    指数固定为 65537，填充至少八个非零随机字节；无效模数或超长消息
+    抛出 ElectricityPlatformError。结果须补齐奇数十六进制位再经 jsbn 转换。
+    """
     try:
         modulus = int(public_key_hex, 16)
     except ValueError as exc:
@@ -68,6 +72,10 @@ def encrypt_password(password: str, public_key_hex: str, random_string: str) -> 
 
 
 def _hidden_value(document: str, field: str) -> str:
+    """从登录页读取必要隐藏参数，缺失或空值抛出平台异常。
+
+    field 仅来自内部固定调用点，不接受用户 XPath。
+    """
     tree = etree.HTML(document)
     if tree is None:
         raise ElectricityPlatformError("电费平台登录页格式异常")
@@ -78,6 +86,7 @@ def _hidden_value(document: str, field: str) -> str:
 
 
 def _response_json(response: httpx.Response) -> Any:
+    """仅验证 JSON 可解析，形状由调用方检查；失败异常不包含原始正文。"""
     try:
         return response.json()
     except ValueError as exc:
@@ -85,7 +94,10 @@ def _response_json(response: httpx.Response) -> Any:
 
 
 class HNUCMElectricityClient:
-    """登录缴费平台并获取单个寝室的电表读数。"""
+    """每次操作独立创建客户端，以 PortalSession 复用 Cookie 和 CSRF。
+
+    trust_env=False 防止学校请求被宿主代理配置转发；不在实例保存账户会话。
+    """
 
     DEFAULT_BASE_URL = "http://cw-zfpt.hnucm.edu.cn"
     csrf_path = "/xysf/api/Token/Csrf"
@@ -100,6 +112,7 @@ class HNUCMElectricityClient:
         timeout: float = 20,
         client_factory: Any = httpx.AsyncClient,
     ):
+        """仅保存连接参数，构造时不发起登录。"""
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.client_factory = client_factory
@@ -112,6 +125,11 @@ class HNUCMElectricityClient:
         password: str,
         session: PortalSession | None = None,
     ) -> tuple[dict[str, Any], PortalSession]:
+        """返回寝室公开读数及从最终 Cookie jar 构造的新会话。
+
+        传入会话时直接复用；会话失效后的重新登录由服务层决定。
+        无效寝室或未配置地址在网络请求前拒绝，协议失败抛出平台异常。
+        """
         try:
             room_number = normalize_room_number(room_number)
         except ValueError as exc:
@@ -152,10 +170,9 @@ class HNUCMElectricityClient:
         password: str,
         session: PortalSession | None = None,
     ) -> tuple[list[dict[str, str]], PortalSession]:
-        """返回账户可见区域中所有可选宿舍。
+        """逐层枚举宿舍目录，返回公开标签及更新后的会话。
 
-        平台通过四级选择器提供目录，没有单一寝室列表接口。使用区域的原始 value 作为校区 ID，
-        其在平台记录生命周期内保持稳定，也能覆盖手工映射未收录的新校区。
+        校区以平台真实区域 ID 标识；不向调用方暴露私有房间选择 ID。
         """
         headers = {
             "Accept": "application/json, text/plain, */*",
@@ -186,6 +203,10 @@ class HNUCMElectricityClient:
     async def _discover_room_options(
         self, client: httpx.AsyncClient, csrf_token: str
     ) -> list[dict[str, str]]:
+        """跳过不完整或请求失败的宿舍分支，继续发现其他区域。
+
+        无法识别的房号只保留公开标签，不猜测可能指向其他电表的寝室号。
+        """
         base_selection = {
             "areaid": "-1",
             "buildid": "-1",
@@ -264,7 +285,10 @@ class HNUCMElectricityClient:
 
     @staticmethod
     def _room_number_from_options(building: str, room: str) -> str | None:
-        """Convert selector labels such as ``6号公寓`` / ``417房`` to ``06417``."""
+        """仅从完整匹配的楼栋、三位房号标签推导寝室号，否则返回 None。
+
+        保留国教楼类，避免与普通楼同号房间混淆。
+        """
         building_match = re.fullmatch(
             r"\s*(?:东塘)?(?P<special>国教)?(?P<number>[0-9]+)(?:号公寓|栋|号楼)\s*",
             building,
@@ -279,6 +303,7 @@ class HNUCMElectricityClient:
         return f"{prefix}{building_number:02d}{room_match.group(1)}"
 
     async def _get_csrf_token(self, client: httpx.AsyncClient) -> str:
+        """取得非空 CSRF 字符串；网络、HTTP 和无效令牌均转为平台异常。"""
         try:
             response = await client.post(self.csrf_path, json={})
             response.raise_for_status()
@@ -291,6 +316,7 @@ class HNUCMElectricityClient:
         return token
 
     async def _get_login_parameters(self, client: httpx.AsyncClient) -> tuple[str, str]:
+        """按模数、随机串顺序返回登录参数；HTTP 或隐藏字段异常阻止登录。"""
         try:
             response = await client.get(self.login_page_path)
             response.raise_for_status()
@@ -306,6 +332,7 @@ class HNUCMElectricityClient:
         username: str,
         password: str,
     ) -> None:
+        """仅业务码 0000 或 FIRST0001 表示成功，HTTP 200 不足以确认登录。"""
         modulus_hex, random_string = public_key
         body = {
             "xh": username,
@@ -338,6 +365,7 @@ class HNUCMElectricityClient:
         room_number: str,
         campus: str,
     ) -> dict[str, Any]:
+        """查询已消歧的寝室；无可用读数时抛出异常，不生成零余额。"""
         for room_selection in await self._resolve_room_selections(
             client, csrf_token, room_number, campus
         ):
@@ -356,7 +384,10 @@ class HNUCMElectricityClient:
         room_number: str,
         campus: str,
     ) -> list[dict[str, Any]]:
-        """Resolve a displayed ``楼栋+房间`` number to portal option IDs."""
+        """将寝室号与校区解析为唯一的四级平台 ID 组合，否则拒绝查询。
+
+        保留国教楼类，精确匹配楼层和房间，防止同名或子串匹配选错电表。
+        """
         try:
             room_number = normalize_room_number(room_number)
         except ValueError as exc:
@@ -428,7 +459,7 @@ class HNUCMElectricityClient:
 
     @staticmethod
     def _area_matches_campus(option: dict[str, Any], campus: str) -> bool:
-        """匹配已发现校区的 ID、精确名称或旧版 hanpu 别名。"""
+        """兼容真实 ID、精确名称；hanpu/dongtang 别名仅匹配非商户宿舍区域。"""
         label = option.get("label")
         return (
             option.get("value") == campus
@@ -444,6 +475,7 @@ class HNUCMElectricityClient:
 
     @staticmethod
     def _level_option_matches(option: dict[str, Any], level_number: str) -> bool:
+        """允许楼栋前缀，但楼层前不得为数字，防止 4 层匹配 14 层。"""
         label = option.get("label")
         return (
             isinstance(label, str)
@@ -458,6 +490,10 @@ class HNUCMElectricityClient:
         key: str,
         selection: dict[str, Any],
     ) -> list[dict[str, Any]]:
+        """验证目录业务状态和 Content 列表，value/label 由上层检查。
+
+        平台提供字符串 RetCode/RetMsg 时保留其说明，否则使用固定错误。
+        """
         try:
             response = await client.post(
                 self.room_option_api_path,
@@ -491,6 +527,11 @@ class HNUCMElectricityClient:
         campus: str,
         room_selection: dict[str, Any],
     ) -> dict[str, Any] | None:
+        """将选择 ID 编为 rybh 内嵌 JSON，兼容顶层或 d 包装响应。
+
+        RetCode 仅接受缺失或 T；缺少电表信息最多尝试三次、间隔 0.25 秒。
+        有电表且 Succ=False 时返回 None；明确协议失败立即抛出异常。
+        """
         body = {
             "rybh": json.dumps(
                 room_selection, ensure_ascii=False, separators=(",", ":")
@@ -529,6 +570,10 @@ class HNUCMElectricityClient:
 
     @staticmethod
     def _serialize_result(room_number: str, campus: str, meter: Any) -> dict[str, Any]:
+        """仅返回公开电表字段；余额与电量均缺失时拒绝成功结果。
+
+        保留平台数字/文本原值，单位解释和采集时间由下游负责。
+        """
         if not isinstance(meter, dict):
             raise ElectricityPlatformError("电费平台返回了异常电表信息")
         if not any(

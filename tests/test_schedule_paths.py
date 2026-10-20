@@ -1,4 +1,4 @@
-"""用模拟时钟覆盖调度边界和异常后的下一轮重试。"""
+"""替换时钟等待与业务动作，不等真实周期；普通失败继续，取消须向生命周期传播。"""
 
 import asyncio
 from datetime import datetime
@@ -21,6 +21,7 @@ import services.electricity_schedule as module
     ],
 )
 def test_retry_boundary_clock(monkeypatch, hour, minute, expected):
+
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):

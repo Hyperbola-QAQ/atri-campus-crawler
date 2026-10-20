@@ -1,5 +1,3 @@
-"""显式启用的真实电量平台集成测试。"""
-
 import pytest
 
 from services.electricity import ElectricityService

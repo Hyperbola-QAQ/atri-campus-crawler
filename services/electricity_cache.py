@@ -1,4 +1,6 @@
-"""使用 Redis 缓存日电量读数，支持进程内降级。"""
+"""按学校、日期、校区及规范寝室身份缓存日读数，本地午夜失效。
+Redis 故障退避并降级进程内副本，不能作为持久化事实来源。
+"""
 
 import asyncio
 import copy
@@ -18,9 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 def _matches_room(result: dict[str, Any], room_number: str) -> bool:
+    """旧载荷缺少寝室字段时兼容，显式身份必须有效且与请求一致。"""
     value = result.get("room_number")
     if value is None:
-        return True  # 兼容未包含身份字段的旧缓存载荷。
+        return True
     if not isinstance(value, str):
         return False
     try:
@@ -30,20 +33,22 @@ def _matches_room(result: dict[str, Any], room_number: str) -> bool:
 
 
 def _matches_identity(result: dict[str, Any], campus: str, room_number: str) -> bool:
-    # 旧载荷可能缺少校区，但显式身份须与缓存键一致；不同校区的同号寝室可能对应不同电表。
+    """校区字段缺失时兼容旧载荷，显式校区和寝室须匹配；学校由键隔离。"""
     return ("campus" not in result or result["campus"] == campus) and _matches_room(
         result, room_number
     )
 
 
 class AsyncKeyValueStore(Protocol):
+    """日缓存使用的最小异步接口；读取兼容文本或字节，ex 使用秒。"""
+
     def get(self, key: str, /) -> Awaitable[str | bytes | None]: ...
 
     def set(self, key: str, value: str, /, *, ex: int) -> Awaitable[Any]: ...
 
 
 class DailyElectricityCache:
-    """缓存读数至下次本地午夜，Redis 不可用时降级为内存缓存。"""
+    """Redis 优先，未命中、无效值或故障时读取本实例内存副本，重启不保留。"""
 
     def __init__(
         self,
@@ -54,6 +59,7 @@ class DailyElectricityCache:
         timezone_name: str | None = None,
         max_memory_entries: int = 50000,
     ):
+        """显式参数优先于环境；非法时区或非正容量拒绝构造，不在此时连接 Redis。"""
         self.school = school
         if max_memory_entries < 1:
             raise ValueError("max_memory_entries must be positive")
@@ -78,9 +84,11 @@ class DailyElectricityCache:
 
     @classmethod
     def from_environment(cls, school: str = "HNUCM") -> "DailyElectricityCache":
+        """按环境约定构造缓存，不探测 Redis 或加载目录。"""
         return cls(school=school)
 
     def _day_and_expiry(self, now: datetime | None = None) -> tuple[str, datetime, int]:
+        """一次采样得到本地日期、下次午夜和至少一秒 TTL，避免跨日键与期限错位。"""
         current = now or datetime.now(self._timezone)
         next_midnight = (current + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -89,21 +97,26 @@ class DailyElectricityCache:
         return current.date().isoformat(), next_midnight, ttl_seconds
 
     def _key(self, campus: str, room_number: str, day: str) -> str:
+        """规范寝室身份后生成版本化日键，保留学校、校区和楼类隔离。"""
         return f"{self._key_prefix}:v2:{self.school}:{day}:{campus}:{normalize_room_number(room_number)}"
 
     async def _client(self) -> AsyncKeyValueStore:
+        """复用注入或延迟获取的 Redis 客户端；连接池由应用管理，本缓存不关闭。"""
         if self._redis_client is None:
             self._redis_client = await get_redis_client()
         return self._redis_client
 
     def _may_use_redis(self) -> bool:
+        """用单调时钟判断退避是否结束，避免系统校时影响重试。"""
         return asyncio.get_running_loop().time() >= self._redis_retry_at
 
     def _mark_redis_unavailable(self) -> None:
+        """按配置记录退避期限，负间隔按零处理，不清空内存副本。"""
         retry_seconds = float(os.getenv("REDIS_RETRY_INTERVAL_SECONDS", "30"))
         self._redis_retry_at = asyncio.get_running_loop().time() + max(0, retry_seconds)
 
     async def _memory_get(self, key: str) -> dict[str, Any] | None:
+        """返回未过午夜的深拷贝，避免调用方修改共享读数。"""
         now = datetime.now(self._timezone)
         async with self._memory_lock:
             entry = self._memory_entries.get(key)
@@ -118,10 +131,10 @@ class DailyElectricityCache:
     async def _memory_set(
         self, key: str, result: dict[str, Any], expires_at: datetime
     ) -> None:
+        """深拷贝写入并限制容量，完整过期扫描每天最多一次，超量按插入顺序淘汰。"""
         async with self._memory_lock:
             now = datetime.now(self._timezone)
             day = now.date().isoformat()
-            # 日缓存统一在午夜过期，每日清理一次，避免每写一间寝室都扫描完整目录。
             if self._last_memory_cleanup_day != day:
                 for old_key, (expiry, _) in list(self._memory_entries.items()):
                     if expiry <= now:
@@ -132,6 +145,7 @@ class DailyElectricityCache:
                 self._memory_entries.pop(next(iter(self._memory_entries)))
 
     async def get(self, campus: str, room_number: str) -> dict[str, Any] | None:
+        """仅接受匹配身份的 JSON 对象；Redis 异常安全降级，内存也未命中则返回 None。"""
         day, _expires_at, _ttl = self._day_and_expiry()
         key = self._key(campus, room_number, day)
         if self._may_use_redis():
@@ -154,6 +168,7 @@ class DailyElectricityCache:
         return await self._memory_get(key)
 
     async def set(self, campus: str, room_number: str, result: dict[str, Any]) -> None:
+        """身份不匹配时拒绝写入；Redis 失败仍写内存，成功不代表共享层已保存。"""
         if not _matches_identity(result, campus, room_number):
             raise ValueError("电费缓存的寝室身份不一致")
         day, expires_at, ttl_seconds = self._day_and_expiry()

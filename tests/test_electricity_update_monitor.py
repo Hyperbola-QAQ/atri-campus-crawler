@@ -1,3 +1,5 @@
+"""导入真实运维脚本并替换服务工厂，不配置真实凭据或进入持续调度。"""
+
 import importlib.util
 import json
 from pathlib import Path

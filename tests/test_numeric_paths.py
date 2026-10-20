@@ -1,5 +1,3 @@
-"""教务数值解析：空值、百分数、非法输入和非有限值。"""
-
 import pytest
 from utils.type import safe_float, safe_int
 

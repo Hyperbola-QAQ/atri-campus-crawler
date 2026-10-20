@@ -7,7 +7,9 @@ ROOM_PATTERN = r"^(?:guojiao-)?[0-9]{4,5}$"
 
 
 def normalize_room_number(room_number: str) -> str:
-    """保留楼栋类别, 将国教和普通寝室规范为不同的稳定标识。"""
+    """支持四五位数字及楼栋分隔写法，补五位并保留 guojiao- 楼类身份；非法输入抛 ValueError。
+    普通与国教同号不可共用缓存或历史键。
+    """
     if re.fullmatch(ROOM_INPUT_PATTERN, room_number) is None:
         raise ValueError("room_number 格式不正确")
     special = room_number.startswith(("guojiao-", "国教"))
@@ -17,5 +19,5 @@ def normalize_room_number(room_number: str) -> str:
 
 
 def numeric_room_number(room_number: str) -> str:
-    """仅供展示、楼层过滤使用, 不能作为缓存或历史记录键。"""
+    """先校验再取五位数字供展示或楼层过滤；丢失楼类，不可作为查询目标或身份键。"""
     return normalize_room_number(room_number).removeprefix("guojiao-")

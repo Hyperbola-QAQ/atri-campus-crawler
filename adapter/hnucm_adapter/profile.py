@@ -1,3 +1,5 @@
+"""按教务打印模板的固定坐标提取个人资料，下载文件仅作临时解析输入。"""
+
 from typing import Dict
 from httpx import Cookies
 from pathlib import Path
@@ -9,6 +11,8 @@ import tempfile
 
 
 class ProfileCrawler:
+    """使用调用方提供的登录 Cookie 查询资料，字段约束由 Profile 模型验证。"""
+
     def __init__(
         self,
         base_url: str,
@@ -24,7 +28,9 @@ class ProfileCrawler:
         self.username = username
 
     async def fetch_profile_xls(self, cookies: Cookies) -> Path:
-        """从教务系统获取个人信息 Excel 文件"""
+        """返回调用方负责删除的临时 Excel 路径；下载或写入失败转为 ValueError。
+        使用系统临时目录兼容只读部署，文件包含个人资料，不应长期保留。
+        """
         try:
             logger.debug(f"[{self.username}] 获取个人信息表")
             async with httpx.AsyncClient(
@@ -34,7 +40,6 @@ class ProfileCrawler:
 
             response.raise_for_status()
 
-            # 使用系统临时目录，兼容源码目录只读且没有 tmp/ 的部署。
             with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
                 xls_path = Path(f.name)
                 f.write(response.content)
@@ -49,23 +54,22 @@ class ProfileCrawler:
             raise ValueError(f"[{self.username}] 获取个人信息表失败：{e}")
 
     async def parse_profile_xls(self, xls_path: Path) -> Dict[str, str]:
-        """解析个人信息 Excel 文件"""
+        """按第一张工作表的固定坐标提取资料，不负责删除文件。
+        模板缺行缺列或格式错误转为 ValueError。
+        """
         try:
             logger.debug(f"[{self.username}] 解析个人信息表 {xls_path}")
 
-            # 读取 Excel 文件 第1份sheet
-            # 第2行第1列是院系 第3列是专业 第6列是班级
-            # 第3行第2列是姓名 第4列是性别
             content = xls_path.read_bytes()
             workbook = xlrd.open_workbook(file_contents=content)
             sheet = workbook.sheet_by_index(0)
             rows = [sheet.row_values(r) for r in range(sheet.nrows)]
             profile = {
-                "department": str(rows[2][0]).strip().replace("院系：", ""),  # 院系
-                "major": str(rows[2][2]).strip().replace("专业：", ""),  # 专业
-                "class_name": str(rows[2][5]).strip().replace("班级：", ""),  # 班级
-                "name": str(rows[3][1]).strip(),  # 姓名
-                "gender": str(rows[3][3]).strip(),  # 性别
+                "department": str(rows[2][0]).strip().replace("院系：", ""),
+                "major": str(rows[2][2]).strip().replace("专业：", ""),
+                "class_name": str(rows[2][5]).strip().replace("班级：", ""),
+                "name": str(rows[3][1]).strip(),
+                "gender": str(rows[3][3]).strip(),
             }
 
             return profile
@@ -77,7 +81,7 @@ class ProfileCrawler:
             raise ValueError("Excel 格式不符合预期，请检查文件内容")
 
     async def get_profile_from_jwxt(self, cookies: Cookies) -> Profile:
-        """从 Excel 文件中提取个人信息"""
+        """下载后无论解析成功与否都清理临时文件，再构造 Profile；异常向上传播。"""
 
         try:
             xls_path: Path = await self.fetch_profile_xls(cookies)
@@ -86,7 +90,6 @@ class ProfileCrawler:
             finally:
                 xls_path.unlink(missing_ok=True)
 
-            # 转换为 Profile 模型
             return Profile(**profile)
 
         except IndexError:

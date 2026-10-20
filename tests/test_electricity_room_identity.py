@@ -1,4 +1,4 @@
-"""重号寝室的解析、目录与缓存隔离回归。"""
+"""跨字符串、选择器、目录和共享缓存验证同号身份隔离，歧义拒绝而不猜首项。"""
 
 import json
 from unittest.mock import AsyncMock

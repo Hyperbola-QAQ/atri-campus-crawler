@@ -5,12 +5,11 @@ from typing import Optional
 def safe_float(
     value: Optional[str], default: Optional[float] = None
 ) -> Optional[float]:
-    """安全地将字符串转换为 float，失败时返回 default；还能处理 50% 这样的格式"""
+    """数字或百分比转有限浮点数，百分比除以 100；空值、转换失败及非有限值返回 default。"""
     if value is None:
         return default
     try:
         value = value.strip() if isinstance(value, str) else value
-        # 如果以 % 结尾，去掉 % 并除以 100
         if isinstance(value, str) and value.endswith("%"):
             result = float(value[:-1]) / 100
         else:
@@ -21,7 +20,7 @@ def safe_float(
 
 
 def safe_int(value: Optional[str], default: Optional[int] = None) -> Optional[int]:
-    """安全地将字符串转换为 int，失败时返回 default"""
+    """先转 float 再向零截断，转换失败返回 default；不代替业务范围校验。"""
     if value is None:
         return default
     try:

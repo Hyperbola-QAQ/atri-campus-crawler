@@ -46,7 +46,12 @@ async def test_get_redis_client_uses_environment(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.infrastructure
 async def test_get_redis_client():
-    """测试获取Redis客户端"""
+    """显式启用时验证真实 Redis 的连接、读写与清理。
+
+    本用例带 infrastructure 标记，默认不会访问用户机器服务。
+    finally 删除专用测试键并关闭客户端，随后清空全局引用。
+    它证明基础存储连通性，不替代日缓存身份与过期策略测试。
+    """
     reset_redis_client_for_tests()  # 此处调用同步接口。
     redis_client: redis.Redis | None = None
     try:

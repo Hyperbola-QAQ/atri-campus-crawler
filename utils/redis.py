@@ -12,7 +12,7 @@ _REDIS_CLIENT: redis.Redis | None = None
 
 
 async def close_redis_client() -> None:
-    """应用关闭时释放所持有的连接池。"""
+    """先清引用再关闭连接池以避免重复释放；生命周期须等所有使用者结束后调用。"""
     global _REDIS_CLIENT
     client, _REDIS_CLIENT = _REDIS_CLIENT, None
     if client is not None:
@@ -20,13 +20,13 @@ async def close_redis_client() -> None:
 
 
 def reset_redis_client_for_tests() -> None:
-    """测试关闭共享客户端后将其重置。"""
+    """仅供已自行关闭连接的测试清引用，不释放资源；生产须用 close_redis_client。"""
     global _REDIS_CLIENT
     _REDIS_CLIENT = None
 
 
 async def get_redis_client() -> redis.Redis:
-    """根据 REDIS_* 环境配置返回共享 Redis 客户端。"""
+    """按 REDIS_* 环境复用进程客户端，空密码不认证；构造不探测连通性，命令失败由调用方处理。"""
     global _REDIS_CLIENT
     if _REDIS_CLIENT is None:
         _REDIS_CLIENT = redis.Redis(

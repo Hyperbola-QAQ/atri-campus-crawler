@@ -1,4 +1,4 @@
-"""寝室目录与日电量读数的进程内定时任务。"""
+"""围绕财务结算窗口调度采集，显式使用 IANA 时区，任务由 API 生命周期回收。"""
 
 import asyncio
 import logging
@@ -24,9 +24,10 @@ LAST_DAILY_COLLECTION_RETRY_AT = time(23)
 
 
 class ElectricitySchedule:
-    """在 API 进程存活期间运行两个电量任务。"""
+    """进程内目录刷新、采集及补采调度器，不提供跨进程选主。"""
 
     def __init__(self, service: ElectricityService):
+        """保存服务与时区，不创建任务；非法时区直接失败。"""
         self.service = service
         self.financial_system_electricity_settlement_cron = (
             FINANCIAL_SYSTEM_ELECTRICITY_SETTLEMENT_CRON
@@ -37,6 +38,7 @@ class ElectricitySchedule:
         self._tasks: list[asyncio.Task[None]] = []
 
     def start(self, *, startup_task: asyncio.Task | None = None) -> None:
+        """启动三个循环，先等待 startup_task；调用方须保证只启动一次。"""
         self._tasks = [
             asyncio.create_task(self._after_startup(startup_task, job))
             for job in (
@@ -51,9 +53,11 @@ class ElectricitySchedule:
         startup_task: asyncio.Task | None,
         job: Callable[[], Awaitable[None]],
     ) -> None:
+        """启动恢复失败仍进入调度；shield 防止本任务取消连带取消共享恢复任务。
+        恢复任务须由生命周期持有者另行取消并等待。
+        """
         if startup_task is not None:
             try:
-                # 调度器关闭被取消时，启动任务仍须由生命周期持有者取消并等待结束。
                 await asyncio.shield(startup_task)
             except Exception:
                 logger.exception(
@@ -62,6 +66,7 @@ class ElectricitySchedule:
         await job()
 
     async def stop(self) -> None:
+        """先全部取消再等待，避免等待期间继续触发采集；非取消异常向上传播。"""
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -71,6 +76,7 @@ class ElectricitySchedule:
                 pass
 
     async def _run_weekly_catalog_refresh(self) -> None:
+        """每周一 11:30 刷新目录，失败后仍等待下一周，不触发读数采集。"""
         while True:
             await self._sleep_until(self._next_weekday(time(11, 30), weekday=0))
             try:
@@ -79,6 +85,7 @@ class ElectricitySchedule:
                 logger.exception("Scheduled electricity room catalog refresh failed")
 
     async def _resume_interrupted_collection(self) -> None:
+        """仅结算后恢复当日断点，失败只记录，不阻止后续计划任务。"""
         if (
             datetime.now(self.timezone).time()
             < FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT
@@ -92,6 +99,7 @@ class ElectricitySchedule:
             logger.exception("Interrupted electricity collection resume failed")
 
     async def _run_daily_reading_collection(self) -> None:
+        """下一次 05:30 强制全量采集，单轮异常不终止调度。"""
         while True:
             await self._sleep_until(
                 self._next_daily(FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT)
@@ -103,7 +111,7 @@ class ElectricitySchedule:
                 logger.exception("Scheduled electricity reading collection failed")
 
     async def _retry_failed_daily_collection(self) -> None:
-        """在 05:30 维护窗口结束后补采不可用读数。"""
+        """半小时窗口仅补采缺失读数，已完成时不访问平台，失败留待下一窗口。"""
         while True:
             await self._sleep_until(self._next_collection_retry())
             try:
@@ -113,19 +121,21 @@ class ElectricitySchedule:
                     )
                     logger.info("Retried electricity reading collection: %s", result)
             except Exception as exc:
-                # 保持任务存活，以便平台恢复后重试。
                 logger.warning("Electricity reading collection will retry: %s", exc)
 
     async def _sleep_until(self, scheduled_at: datetime) -> None:
+        """等待带时区计划时刻，过去时间按零秒处理。"""
         seconds = max(0, (scheduled_at - datetime.now(self.timezone)).total_seconds())
         await asyncio.sleep(seconds)
 
     def _next_daily(self, scheduled_time: time) -> datetime:
+        """返回严格未来的每日时刻；恰好命中时推迟一天，避免重复触发。"""
         now = datetime.now(self.timezone)
         candidate = datetime.combine(now.date(), scheduled_time, tzinfo=self.timezone)
         return candidate if candidate > now else candidate + timedelta(days=1)
 
     def _next_weekday(self, scheduled_time: time, *, weekday: int) -> datetime:
+        """按 Python 周一为零返回严格未来窗口，已到本周时刻则推迟七天。"""
         now = datetime.now(self.timezone)
         days = (weekday - now.weekday()) % 7
         candidate = datetime.combine(
@@ -134,6 +144,9 @@ class ElectricitySchedule:
         return candidate if candidate > now else candidate + timedelta(days=7)
 
     def _next_collection_retry(self) -> datetime:
+        """返回 06:00（含）至 23:00（不含）的下一个整点或半点。
+        窗口外及下一候选触及 23:00 时，等待最近的 06:00。
+        """
         now = datetime.now(self.timezone)
         first_retry = datetime.combine(
             now.date(), FIRST_DAILY_COLLECTION_RETRY_AT, tzinfo=self.timezone
