@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: sync-dependencies
-          image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
+          image: 192.168.86.100:30500/ca-clean/uv@sha256:09cb6a6dff5885d14aeca24b4e8a4d463ed938784ceeef2c154da167e938b121
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -67,7 +67,7 @@ spec:
               readOnly: true
       containers:
         - name: university-crawler
-          image: ghcr.io/astral-sh/uv:python3.14-trixie-slim
+          image: 192.168.86.100:30500/ca-clean/uv@sha256:09cb6a6dff5885d14aeca24b4e8a4d463ed938784ceeef2c154da167e938b121
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
