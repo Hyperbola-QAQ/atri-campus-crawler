@@ -397,3 +397,117 @@ async def test_queued_retry_rechecks_deadline_after_collection_lock(service):
         value._collection_lock.release()
     assert await asyncio.wait_for(task, timeout=1) == {"succeeded": 0, "failed": 0}
     value.query_live.assert_not_awaited()
+
+
+async def test_collection_aggregates_only_fixed_final_failure_reasons(service, caplog):
+    value, _ = service
+    value.query_live.side_effect = [
+        ElectricityQueryError("private-upstream-text", reason="meter_unavailable"),
+        ElectricityQueryError("private-account-text", reason="untrusted-private-label"),
+    ]
+    assert await value.collect_room_readings(force=True, interval_seconds=0.001) == {
+        "succeeded": 0,
+        "failed": 2,
+    }
+    message = caplog.records[-1].getMessage()
+    assert "reason_counts={'meter_unavailable': 1, 'unknown': 1}" in message
+    assert "count_unit=catalog_row" in message
+    assert "private" not in message
+    assert "06627" not in message
+
+
+async def test_account_pool_failures_are_separate_from_unknown(service, caplog):
+    from services.electricity import AccountPoolConfigurationError
+
+    value, _ = service
+    value.query_live.side_effect = AccountPoolConfigurationError("private-value")
+    assert (await value.collect_room_readings(force=True, interval_seconds=0.001))[
+        "failed"
+    ] == 2
+    assert "reason_counts={'account_pool': 2}" in caplog.records[-1].getMessage()
+    assert "private-value" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "reasons,expected",
+    [
+        (["http_request", "http_request"], "http_request"),
+        (["http_request", "unknown"], "mixed"),
+    ],
+)
+async def test_account_rotation_counts_one_final_reason_without_changing_message(
+    service, reasons, expected
+):
+    from types import SimpleNamespace
+    from adapter.hnucm_adapter.electricity import ElectricityPlatformError
+
+    value, _ = service
+    value.base_url = "https://portal.test"
+    value.account_pool.rotated_accounts = AsyncMock(
+        return_value=[
+            SimpleNamespace(cache_key="one"),
+            SimpleNamespace(cache_key="two"),
+        ]
+    )
+    value.cookie_cache.delete = AsyncMock()
+    value._query_account = AsyncMock(
+        side_effect=[
+            ElectricityPlatformError("same-safe-message", reason=reason)
+            for reason in reasons
+        ]
+    )
+    with pytest.raises(ElectricityQueryError, match="same-safe-message") as caught:
+        await ElectricityService.query_live(value, "06627", "area")
+    assert caught.value.reason == expected
+
+
+@pytest.mark.parametrize(
+    "payload,reason", [({}, "reading_unavailable"), ([], "upstream_response")]
+)
+def test_adapter_serialization_failures_keep_fixed_reason(payload, reason):
+    from adapter.hnucm_adapter.electricity import (
+        ElectricityPlatformError,
+        HNUCMElectricityClient,
+    )
+
+    with pytest.raises(ElectricityPlatformError) as caught:
+        HNUCMElectricityClient._serialize_result("06627", "area", payload)
+    assert caught.value.reason == reason
+
+
+async def test_adapter_empty_meter_selection_is_unavailable_not_proven_unbound():
+    from adapter.hnucm_adapter.electricity import (
+        ElectricityPlatformError,
+        HNUCMElectricityClient,
+    )
+
+    client = HNUCMElectricityClient("https://portal.test")
+    client._resolve_room_selections = AsyncMock(return_value=[])
+    with pytest.raises(ElectricityPlatformError) as caught:
+        await client._get_electricity(None, "unused", "06627", "area")
+    assert caught.value.reason == "meter_unavailable"
+
+
+async def test_crossing_deadline_reports_prior_failure_exactly_once(service, caplog):
+    value, state = service
+    await seed(value, state)
+    await seed(value, state, "06628")
+
+    async def fail_and_cross_deadline(room, campus):
+        state["now"] = state["now"].replace(hour=3)
+        raise ElectricityQueryError("private-response", reason="http_request")
+
+    value.query_live.side_effect = fail_and_cross_deadline
+    assert await value.collect_room_readings(
+        retry_rooms=[("area", "06627"), ("area", "06628")],
+        interval_seconds=0.001,
+    ) == {"succeeded": 0, "failed": 1}
+    value.query_live.assert_awaited_once()
+    records = [
+        r
+        for r in caplog.records
+        if "Daily electricity collection incomplete:" in r.getMessage()
+    ]
+    assert len(records) == 1
+    assert "reason_counts={'http_request': 1}" in records[0].getMessage()
+    assert "private-response" not in records[0].getMessage()
