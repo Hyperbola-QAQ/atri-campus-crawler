@@ -1,5 +1,6 @@
 """后台重采冷却60分钟，前台按条件直查，11点不再发起财务请求。"""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
@@ -360,3 +361,39 @@ def test_missing_meter_and_valid_meter_without_values_never_match():
     assert not electricity.same_reading(
         {"meter_number": "test-meter"}, {"meter_number": "test-meter"}
     )
+
+
+@pytest.mark.parametrize(
+    "rooms,hour",
+    [([], 1), ([], 3), ([("area", "06627")], 3), ([("area", "06627")], 21)],
+)
+async def test_noop_retry_never_waits_for_busy_collection_lock(service, rooms, hour):
+    value, state = service
+    state["now"] = state["now"].replace(hour=hour)
+    await value._collection_lock.acquire()
+    try:
+        result = await asyncio.wait_for(
+            value.collect_room_readings(retry_rooms=rooms), timeout=0.1
+        )
+        assert result == {"succeeded": 0, "failed": 0}
+        assert value._collection_lock.locked()
+        value.query_live.assert_not_awaited()
+    finally:
+        value._collection_lock.release()
+
+
+async def test_queued_retry_rechecks_deadline_after_collection_lock(service):
+    value, state = service
+    await seed(value, state)
+    await value._collection_lock.acquire()
+    task = asyncio.create_task(
+        value.collect_room_readings(retry_rooms=[("area", "06627")])
+    )
+    try:
+        await asyncio.sleep(0)
+        assert not task.done()
+        state["now"] = state["now"].replace(hour=3)
+    finally:
+        value._collection_lock.release()
+    assert await asyncio.wait_for(task, timeout=1) == {"succeeded": 0, "failed": 0}
+    value.query_live.assert_not_awaited()

@@ -624,6 +624,10 @@ class ElectricityService:
             raise ValueError("电费采集计划参数无效")
         if sum((force, retry_missing, retry_rooms is not None)) > 1:
             raise ValueError("强制采集、缺失补采和指定寝室重采不能同时使用")
+        if retry_rooms is not None:
+            now = datetime.now(ZoneInfo("Asia/Shanghai"))
+            if not retry_rooms or not time(5, 30) <= now.time() < time(11):
+                return {"succeeded": 0, "failed": 0}
         async with self._collection_lock:
             if retry_rooms is not None:
                 now = datetime.now(ZoneInfo("Asia/Shanghai"))
