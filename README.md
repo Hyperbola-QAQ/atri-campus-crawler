@@ -48,6 +48,18 @@ Kubernetes 部署与更新见 [部署说明](deploy/k8s/README.md)。
 
 ## API
 
+普通电费 GET 只读取今日缓存。内部 GET 使用 `recheck=true` 时需要 Bearer 令牌：
+上海时间 05:30–11:00，今日和昨日同电表的余额、电量相同就直接请求财务平台，
+每次符合条件的前台查询都会请求，不受后台 60 分钟冷却限制。数值变化后恢复缓存。
+若昨日 Redis 缓存缺失，server 可通过 `known_unchanged=true` 传入本地比较结论；
+该参数同样受令牌保护，不包含历史读数。
+内部POST `/api/v1/electricity/retry-unchanged?school=HNUCM` 接收
+`{"rooms": [{"campus": "目录校区ID", "room_number": "06627"}]}`，
+需携带 `Authorization: Bearer <CRAWLER_INTERNAL_TOKEN>`，每批最多1000间。
+server在本地比较昨日、今日读数后只提交相同的寝室标识，不传历史余额或电量。
+采集沿用限速与实例锁；后台成功或失败都至少间隔60分钟，11:00起停止发起这类重采。
+没有有效昨日对照且无 server 判定时不额外请求；数值不同后不再提交，故不保证日内实时性。
+
 ### 查询寝室剩余电费
 
 ```http
@@ -82,8 +94,9 @@ GET /api/v1/electricity/hanpu/<ROOMID>
 账号池按轮转顺序尝试账号。已登录 Cookie 和 CSRF 令牌仅缓存在当前进程内，默认
 30 分钟过期；服务重启后缓存会清空。
 
-电费平台的读数每天才刷新，因此同一校区、寝室当天的成功查询会被缓存至下一次
-本地零点（默认 `Asia/Shanghai`，可由 `ELECTRICITY_CACHE_TIMEZONE` 修改）。缓存
+电费平台不保证在 05:30 即完成读数更新。缓存按本地日期分键，每份成功读数保留至
+次日结束，以便比较今日与昨日；默认 GET 仍只读取今日键，不返回昨日数据。
+默认时区为 `Asia/Shanghai`，可由 `ELECTRICITY_CACHE_TIMEZONE` 修改。缓存
 优先写入 Redis，键前缀可通过 `ELECTRICITY_CACHE_KEY_PREFIX` 配置。若 Redis
 连接、读取或写入失败，服务会立即改用当前进程内存缓存，不会因此使电费接口失败；
 它会在 `REDIS_RETRY_INTERVAL_SECONDS`（默认 30 秒）后再尝试连接 Redis。进程

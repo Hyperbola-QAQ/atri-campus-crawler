@@ -10,17 +10,19 @@ import os
 import random
 import re
 import tempfile
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ClassVar
 from zoneinfo import ZoneInfo
+from weakref import WeakValueDictionary
 
 from adapter.hnucm_adapter.electricity import (
     ElectricityPlatformError,
     HNUCMElectricityClient,
 )
 from utils.electricity_identity import normalize_room_number
+from utils.electricity_reading import same_reading
 from services.cookie_cache import InMemoryCookieCache
 from services.electricity_cache import DailyElectricityCache
 
@@ -257,6 +259,7 @@ class ElectricityService:
         client_factory: Callable[[str], Any] = HNUCMElectricityClient,
         cookie_cache: InMemoryCookieCache | None = None,
         reading_cache: DailyElectricityCache | None = None,
+        retry_cache: DailyElectricityCache | None = None,
     ):
         """注入客户端与缓存，不登录或采集；环境路径为空时禁用对应持久化。
         HNUCM 保留旧文件名，其他学校加学校后缀隔离。
@@ -269,6 +272,15 @@ class ElectricityService:
         self.reading_cache = reading_cache or DailyElectricityCache.from_environment(
             school=self.school
         )
+        self.retry_cache = retry_cache or DailyElectricityCache(
+            school=self.school,
+            key_prefix=os.getenv("ELECTRICITY_CACHE_KEY_PREFIX", "electricity:daily")
+            + ":retry-attempt",
+        )
+        self._query_locks: WeakValueDictionary[tuple[str, str], asyncio.Lock] = (
+            WeakValueDictionary()
+        )
+        self._query_slots = asyncio.Semaphore(8)
         default_catalog_path = (
             Path(__file__).resolve().parent.parent / "config" / "electricity_rooms.json"
         )
@@ -351,13 +363,14 @@ class ElectricityService:
         此路径可联网，只读 API 应使用 get_cached_room_reading。
         """
         room_number = normalize_room_number(room_number)
-        cached_result = await self.reading_cache.get(campus, room_number)
-        if cached_result is not None:
-            return cached_result
-
-        result = await self.query_live(room_number, campus)
-        await self.reading_cache.set(campus, room_number, result)
-        return result
+        lock = self._query_locks.setdefault((campus, room_number), asyncio.Lock())
+        async with lock:
+            cached_result = await self.reading_cache.get(campus, room_number)
+            if cached_result is not None:
+                return cached_result
+            result = await self.query_live(room_number, campus)
+            await self.reading_cache.set(campus, room_number, result)
+            return result
 
     async def query_live(self, room_number: str, campus: str) -> dict[str, Any]:
         """绕过日缓存轮换账户，仍可复用 Cookie，成功补 UTC 采集时间。
@@ -478,6 +491,46 @@ class ElectricityService:
             return False, None
         return True, await self.reading_cache.get(resolved_campus, room_number)
 
+    async def get_query_room_reading(
+        self, room_number: str, campus: str, *, known_unchanged: bool = False
+    ) -> tuple[bool | None, dict[str, Any] | None]:
+        """晨间今日仍与昨日相同时，前台查询直接联网，不受后台60分钟冷却限制。"""
+        catalogued, result = await self.get_cached_room_reading(room_number, campus)
+        if not catalogued:
+            return catalogued, None
+        catalog = self.get_room_catalog()
+        assert catalog is not None
+        campus = self._resolve_catalog_campus(catalog, campus)
+        room_number = normalize_room_number(room_number)
+        key = (campus, room_number)
+        lock = self._query_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            result = await self.reading_cache.get(campus, room_number)
+            local = datetime.now(ZoneInfo("Asia/Shanghai"))
+            if not time(5, 30) <= local.time() < time(11):
+                return True, result
+            previous = await self.reading_cache.get(
+                campus, room_number, day=local.date() - timedelta(days=1)
+            )
+            unchanged = (
+                same_reading(result, previous)
+                if result and previous
+                else known_unchanged
+            )
+            if not unchanged:
+                return True, result
+            async with self._query_slots:
+                if datetime.now(ZoneInfo("Asia/Shanghai")).time() >= time(11):
+                    return True, result
+                await self.retry_cache.set(
+                    campus,
+                    room_number,
+                    {"attempted_at": datetime.now(timezone.utc).isoformat()},
+                )
+                result = await self.query_live(room_number, campus)
+                await self.reading_cache.set(campus, room_number, result)
+                return True, result
+
     @staticmethod
     def _resolve_catalog_campus(catalog: dict[str, Any], campus: str) -> str:
         """仅含浦、东塘别名按目录名称解析，未知或未匹配时保留输入供后续身份检查。"""
@@ -560,6 +613,7 @@ class ElectricityService:
         jitter_seconds: float = 0,
         force: bool = False,
         retry_missing: bool = False,
+        retry_rooms: list[tuple[str, str]] | None = None,
     ) -> dict[str, int]:
         """实例锁内串行处理有界批次，普通模式复用日缓存并恢复同日全量断点。
         force 刷新全部，retry_missing 只补缺失，两者互斥；批量和间隔须为正，抖动非负。
@@ -568,11 +622,17 @@ class ElectricityService:
         """
         if batch_size < 1 or interval_seconds <= 0 or jitter_seconds < 0:
             raise ValueError("电费采集计划参数无效")
-        if force and retry_missing:
-            raise ValueError("强制采集不能与缺失重试同时使用")
+        if sum((force, retry_missing, retry_rooms is not None)) > 1:
+            raise ValueError("强制采集、缺失补采和指定寝室重采不能同时使用")
         async with self._collection_lock:
+            if retry_rooms is not None:
+                now = datetime.now(ZoneInfo("Asia/Shanghai"))
+                if not time(5, 30) <= now.time() < time(11):
+                    return {"succeeded": 0, "failed": 0}
             catalog = self.get_room_catalog()
             if catalog is None:
+                if retry_rooms is not None:
+                    raise ElectricityQueryError("寝室目录尚未同步完成")
                 catalog = await self.refresh_room_catalog()
 
             rooms = [
@@ -584,12 +644,26 @@ class ElectricityService:
             ]
             catalog_total = len(rooms)
             if retry_missing:
-                # 已缓存寝室已有当天不可变快照，重试仅补采缺失项，减少财务平台压力。
+                # 缺失补采不重查已有读数，晨间相同读数由server比较后单独指定。
                 rooms = [
                     room
                     for room in rooms
                     if await self.reading_cache.get(room["campus"], room["room_number"])
                     is None
+                ]
+            if retry_rooms is not None:
+                requested = {
+                    (
+                        self._resolve_catalog_campus(catalog, campus),
+                        normalize_room_number(room),
+                    )
+                    for campus, room in retry_rooms
+                }
+                rooms = [
+                    room
+                    for room in rooms
+                    if (room["campus"], room["room_number"]) in requested
+                    and await self._retry_room_due(room["campus"], room["room_number"])
                 ]
             collection_date = self._collection_date()
             state = self._read_collection_state()
@@ -600,7 +674,7 @@ class ElectricityService:
                 and isinstance(state.get("next_index"), int)
                 else 0
             )
-            if force or retry_missing:
+            if force or retry_missing or retry_rooms is not None:
                 next_index = 0
             next_index = min(max(0, next_index), len(rooms))
             succeeded = 0
@@ -617,20 +691,45 @@ class ElectricityService:
                 batch = rooms[batch_index : batch_index + batch_size]
                 for room in batch:
                     try:
-                        if force:
-                            result = await self.query_live(
-                                room["room_number"], room["campus"]
+                        if force or retry_rooms is not None:
+                            lock = self._query_locks.setdefault(
+                                (room["campus"], room["room_number"]), asyncio.Lock()
                             )
-                            await self.reading_cache.set(
-                                room["campus"], room["room_number"], result
-                            )
+                            async with lock:
+                                if retry_rooms is not None:
+                                    if datetime.now(
+                                        ZoneInfo("Asia/Shanghai")
+                                    ).time() >= time(11):
+                                        return {
+                                            "succeeded": succeeded,
+                                            "failed": failed,
+                                        }
+                                    if not await self._retry_room_due(
+                                        room["campus"], room["room_number"]
+                                    ):
+                                        continue
+                                    await self.retry_cache.set(
+                                        room["campus"],
+                                        room["room_number"],
+                                        {
+                                            "attempted_at": datetime.now(
+                                                timezone.utc
+                                            ).isoformat()
+                                        },
+                                    )
+                                result = await self.query_live(
+                                    room["room_number"], room["campus"]
+                                )
+                                await self.reading_cache.set(
+                                    room["campus"], room["room_number"], result
+                                )
                         else:
                             await self.query(room["room_number"], room["campus"])
                     except (AccountPoolConfigurationError, ElectricityQueryError):
                         failed += 1
                     else:
                         succeeded += 1
-                if not retry_missing:
+                if not retry_missing and retry_rooms is None:
                     self._write_collection_state(
                         {
                             "date": collection_date,
@@ -654,6 +753,37 @@ class ElectricityService:
                     retry_missing,
                 )
             return {"succeeded": succeeded, "failed": failed}
+
+    async def _retry_room_due(self, campus: str, room: str) -> bool:
+        """后台重采至少间隔60分钟；失败及前台尝试也记冷却。"""
+        reading = await self.reading_cache.get(campus, room)
+        if not reading:
+            return False
+        try:
+            collected = datetime.fromisoformat(reading["collected_at"])
+            now = datetime.now(timezone.utc)
+            if (
+                collected.tzinfo is None
+                or collected.astimezone(ZoneInfo("Asia/Shanghai")).date()
+                != now.astimezone(ZoneInfo("Asia/Shanghai")).date()
+            ):
+                return False
+            attempted = await self.retry_cache.get(campus, room)
+            if attempted:
+                last = datetime.fromisoformat(attempted["attempted_at"])
+                if last.tzinfo is not None:
+                    collected = max(collected, last)
+            previous = await self.reading_cache.get(
+                campus,
+                room,
+                day=now.astimezone(ZoneInfo("Asia/Shanghai")).date()
+                - timedelta(days=1),
+            )
+            if previous and not same_reading(reading, previous):
+                return False
+            return (now - collected).total_seconds() >= 3600
+        except (KeyError, TypeError, ValueError):
+            return False
 
     async def resume_today_collection(self) -> dict[str, int] | None:
         """仅恢复同日、目录存在且未完成的全量断点，否则返回 None。
