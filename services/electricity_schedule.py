@@ -11,8 +11,8 @@ from services.electricity import ElectricityService
 
 logger = logging.getLogger(__name__)
 
-# 财务系统每日 02:00--05:30 维护。05:30 之后读取到的是当日结算后的数据，
-# 因而采集与补采均以这个时刻为准，而不是沿用早期观察时的 11:00。
+# 05:30是维护结束后的首轮采集起点，不保证上游此后不再更新。
+# server在本地比较昨日值，仅对仍相同的寝室在11:00前申请有限重采。
 FINANCIAL_SYSTEM_MAINTENANCE_START = time(2)
 FINANCIAL_SYSTEM_MAINTENANCE_END = time(5, 30)
 FINANCIAL_SYSTEM_DAILY_DATA_AVAILABLE_AT = FINANCIAL_SYSTEM_MAINTENANCE_END

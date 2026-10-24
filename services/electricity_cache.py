@@ -1,4 +1,4 @@
-"""按学校、日期、校区及规范寝室身份缓存日读数，本地午夜失效。
+"""按学校、日期、校区及规范寝室身份缓存读数，可保留昨日用于晨间比较。
 Redis 故障退避并降级进程内副本，不能作为持久化事实来源。
 """
 
@@ -7,7 +7,7 @@ import copy
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -58,9 +58,13 @@ class DailyElectricityCache:
         key_prefix: str | None = None,
         timezone_name: str | None = None,
         max_memory_entries: int = 50000,
+        retention_days: int = 1,
     ):
         """显式参数优先于环境；非法时区或非正容量拒绝构造，不在此时连接 Redis。"""
         self.school = school
+        if retention_days < 1:
+            raise ValueError("retention_days must be positive")
+        self._retention_days = retention_days
         if max_memory_entries < 1:
             raise ValueError("max_memory_entries must be positive")
         self._max_memory_entries = max_memory_entries
@@ -85,12 +89,12 @@ class DailyElectricityCache:
     @classmethod
     def from_environment(cls, school: str = "HNUCM") -> "DailyElectricityCache":
         """按环境约定构造缓存，不探测 Redis 或加载目录。"""
-        return cls(school=school)
+        return cls(school=school, retention_days=2)
 
     def _day_and_expiry(self, now: datetime | None = None) -> tuple[str, datetime, int]:
-        """一次采样得到本地日期、下次午夜和至少一秒 TTL，避免跨日键与期限错位。"""
+        """一次采样得到日期和保留期末午夜；保留两天时昨日键仍可用于比较。"""
         current = now or datetime.now(self._timezone)
-        next_midnight = (current + timedelta(days=1)).replace(
+        next_midnight = (current + timedelta(days=self._retention_days)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         ttl_seconds = max(1, int((next_midnight - current).total_seconds()))
@@ -116,7 +120,7 @@ class DailyElectricityCache:
         self._redis_retry_at = asyncio.get_running_loop().time() + max(0, retry_seconds)
 
     async def _memory_get(self, key: str) -> dict[str, Any] | None:
-        """返回未过午夜的深拷贝，避免调用方修改共享读数。"""
+        """返回未过保留期限的深拷贝，避免调用方修改共享读数。"""
         now = datetime.now(self._timezone)
         async with self._memory_lock:
             entry = self._memory_entries.get(key)
@@ -144,10 +148,12 @@ class DailyElectricityCache:
             while len(self._memory_entries) > self._max_memory_entries:
                 self._memory_entries.pop(next(iter(self._memory_entries)))
 
-    async def get(self, campus: str, room_number: str) -> dict[str, Any] | None:
+    async def get(
+        self, campus: str, room_number: str, *, day: date | None = None
+    ) -> dict[str, Any] | None:
         """仅接受匹配身份的 JSON 对象；Redis 异常安全降级，内存也未命中则返回 None。"""
-        day, _expires_at, _ttl = self._day_and_expiry()
-        key = self._key(campus, room_number, day)
+        today, _expires_at, _ttl = self._day_and_expiry()
+        key = self._key(campus, room_number, day.isoformat() if day else today)
         if self._may_use_redis():
             try:
                 raw_value = await (await self._client()).get(key)

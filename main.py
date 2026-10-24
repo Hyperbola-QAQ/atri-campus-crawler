@@ -1,5 +1,5 @@
 """教务抓取及内部账户 API 仅用已注册学校；外层服务仍须按用户授权查询范围。
-电量请求只读目录与结算后日缓存，教务指定学号不轮换其他学生。
+公开电量查询只读日缓存，内部晨间条件查询和后台重采受令牌保护；教务指定学号不轮换其他学生。
 应用拥有启动恢复和调度任务，退出先回收任务再关 Redis。
 """
 
@@ -197,6 +197,15 @@ async def require_internal_token(request: Request, call_next):
         or request.url.path.startswith("/api/v1/electricity/accounts")
         or request.url.path == "/api/v1/electricity/rooms/refresh"
         or request.url.path.startswith("/api/v1/academic/accounts")
+        or request.url.path == "/api/v1/electricity/retry-unchanged"
+        or (
+            request.url.path.startswith("/api/v1/electricity/")
+            and any(
+                request.query_params.get(flag, "false").lower()
+                not in {"false", "0", "off", "no", ""}
+                for flag in ("recheck", "known_unchanged")
+            )
+        )
     )
     if protected_paths:
         token = os.getenv("CRAWLER_INTERNAL_TOKEN")
@@ -463,6 +472,32 @@ async def get_electricity_collection_status(
     )
 
 
+class ElectricityRetryRoom(BaseModel):
+    campus: str = Field(min_length=1, max_length=128)
+    room_number: str = Field(min_length=4, max_length=32, pattern=ROOM_INPUT_PATTERN)
+
+
+class ElectricityRetryRequest(BaseModel):
+    """仅含公开目录中的寝室标识，不传输历史余额或电量。"""
+
+    rooms: list[ElectricityRetryRoom] = Field(max_length=1000)
+
+
+@app.post("/api/v1/electricity/retry-unchanged", tags=["electricity"])
+async def retry_unchanged_electricity(
+    payload: ElectricityRetryRequest,
+    service: ElectricityService = Depends(get_electricity_service),
+    school: School = "HNUCM",
+):
+    """内部晨间任务只重采server已比较为相同的寝室，11:00后不再发起请求。"""
+    try:
+        return await service.collect_room_readings(
+            retry_rooms=[(room.campus, room.room_number) for room in payload.rooms]
+        )
+    except (AccountPoolConfigurationError, ElectricityQueryError) as exc:
+        raise HTTPException(503, "晨间电费重采暂不可用") from exc
+
+
 @app.get(
     "/api/v1/electricity/{campus}/{room_number}",
     response_model=ElectricityResponse,
@@ -477,13 +512,25 @@ async def get_electricity(
     ),
     service: ElectricityService = Depends(get_electricity_service),
     school: School = "HNUCM",
+    recheck: bool = False,
+    known_unchanged: bool = False,
 ) -> ElectricityResponse:
-    """只读规范寝室日缓存；无目录或未采集 503，无此寝室 404，不登录平台。
+    """默认只读规范寝室日缓存；内部 recheck 模式允许晨间条件刷新。
+
+    无目录或未采集 503，无此寝室 404。
     非空 collected_at 须带时区、为上海当天 05:30 后且不晚于当前；不符视为未采集。
     缺失或空采集时间沿用旧缓存兼容，不伪造时间。
     """
     room_number = normalize_room_number(room_number)
-    catalogued, result = await service.get_cached_room_reading(room_number, campus)
+    if recheck:
+        try:
+            catalogued, result = await service.get_query_room_reading(
+                room_number, campus, known_unchanged=known_unchanged
+            )
+        except (AccountPoolConfigurationError, ElectricityQueryError) as exc:
+            raise HTTPException(503, "电费条件刷新暂不可用") from exc
+    else:
+        catalogued, result = await service.get_cached_room_reading(room_number, campus)
     if catalogued is None:
         raise HTTPException(status_code=503, detail="寝室目录尚未同步完成")
     if not catalogued:
