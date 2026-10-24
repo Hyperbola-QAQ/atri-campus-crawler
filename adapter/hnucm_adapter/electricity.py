@@ -14,7 +14,32 @@ from utils.electricity_identity import normalize_room_number
 
 
 class ElectricityPlatformError(RuntimeError):
-    """远端电量服务无法返回电表数据时抛出。"""
+    """远端电量服务无法返回电表数据；原因仅用固定类别，不记录平台响应。"""
+
+    REASONS = frozenset(
+        {
+            "meter_unavailable",
+            "reading_unavailable",
+            "http_request",
+            "authentication",
+            "upstream_response",
+            "ambiguous_identity",
+            "unknown",
+            "mixed",
+        }
+    )
+
+    @staticmethod
+    def safe_reason(reason: str) -> str:
+        return (
+            reason
+            if isinstance(reason, str) and reason in ElectricityPlatformError.REASONS
+            else "unknown"
+        )
+
+    def __init__(self, message: str, *, reason: str = "unknown"):
+        super().__init__(message)
+        self.reason = self.safe_reason(reason)
 
 
 def _jsbn_hex_to_base64(value: str) -> str:
@@ -90,7 +115,9 @@ def _response_json(response: httpx.Response) -> Any:
     try:
         return response.json()
     except ValueError as exc:
-        raise ElectricityPlatformError("电费平台返回了无法识别的数据") from exc
+        raise ElectricityPlatformError(
+            "电费平台返回了无法识别的数据", reason="upstream_response"
+        ) from exc
 
 
 class HNUCMElectricityClient:
@@ -308,7 +335,9 @@ class HNUCMElectricityClient:
             response = await client.post(self.csrf_path, json={})
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ElectricityPlatformError("无法连接电费平台") from exc
+            raise ElectricityPlatformError(
+                "无法连接电费平台", reason="http_request"
+            ) from exc
 
         token = _response_json(response)
         if not isinstance(token, str) or not token:
@@ -321,7 +350,9 @@ class HNUCMElectricityClient:
             response = await client.get(self.login_page_path)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ElectricityPlatformError("无法读取电费平台登录页") from exc
+            raise ElectricityPlatformError(
+                "无法读取电费平台登录页", reason="http_request"
+            ) from exc
         return _hidden_value(response.text, "pbk"), _hidden_value(response.text, "ts")
 
     async def _login(
@@ -349,14 +380,16 @@ class HNUCMElectricityClient:
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ElectricityPlatformError("电费平台登录请求失败") from exc
+            raise ElectricityPlatformError(
+                "电费平台登录请求失败", reason="http_request"
+            ) from exc
 
         result = _response_json(response)
         if not isinstance(result, dict) or result.get("code") not in {
             "0000",
             "FIRST0001",
         }:
-            raise ElectricityPlatformError("电费平台登录失败")
+            raise ElectricityPlatformError("电费平台登录失败", reason="authentication")
 
     async def _get_electricity(
         self,
@@ -375,7 +408,9 @@ class HNUCMElectricityClient:
             if result is not None:
                 return result
 
-        raise ElectricityPlatformError("电费平台暂未返回该寝室的电表信息")
+        raise ElectricityPlatformError(
+            "电费平台暂未返回该寝室的电表信息", reason="meter_unavailable"
+        )
 
     async def _resolve_room_selections(
         self,
@@ -454,7 +489,9 @@ class HNUCMElectricityClient:
             for item in selections
         }
         if len(unique) != 1:
-            raise ElectricityPlatformError("目录存在多个同名寝室, 无法安全确定电表")
+            raise ElectricityPlatformError(
+                "目录存在多个同名寝室, 无法安全确定电表", reason="ambiguous_identity"
+            )
         return list(unique.values())
 
     @staticmethod
@@ -502,7 +539,9 @@ class HNUCMElectricityClient:
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ElectricityPlatformError("无法读取电费平台房间信息") from exc
+            raise ElectricityPlatformError(
+                "无法读取电费平台房间信息", reason="http_request"
+            ) from exc
         result = _response_json(response)
         if not isinstance(result, dict):
             raise ElectricityPlatformError("电费平台房间信息格式异常")
@@ -549,14 +588,20 @@ class HNUCMElectricityClient:
                 )
                 response.raise_for_status()
             except httpx.HTTPError as exc:
-                raise ElectricityPlatformError("电费查询请求失败") from exc
+                raise ElectricityPlatformError(
+                    "电费查询请求失败", reason="http_request"
+                ) from exc
             result = _response_json(response)
             if isinstance(result, dict) and isinstance(result.get("d"), dict):
                 result = result["d"]
             if not isinstance(result, dict):
-                raise ElectricityPlatformError("电费平台返回了异常数据")
+                raise ElectricityPlatformError(
+                    "电费平台返回了异常数据", reason="upstream_response"
+                )
             if result.get("RetCode") not in (None, "T"):
-                raise ElectricityPlatformError("电费平台未能查询该寝室")
+                raise ElectricityPlatformError(
+                    "电费平台未能查询该寝室", reason="upstream_response"
+                )
             content = result.get("Content")
             if isinstance(content, dict) and content.get("CzThirdInfo"):
                 if content.get("Succ") is False:
@@ -575,11 +620,15 @@ class HNUCMElectricityClient:
         保留平台数字/文本原值，单位解释和采集时间由下游负责。
         """
         if not isinstance(meter, dict):
-            raise ElectricityPlatformError("电费平台返回了异常电表信息")
+            raise ElectricityPlatformError(
+                "电费平台返回了异常电表信息", reason="upstream_response"
+            )
         if not any(
             meter.get(key) not in (None, "") for key in ("PackageName", "Balance")
         ):
-            raise ElectricityPlatformError("电费平台暂未返回该寝室的电量信息")
+            raise ElectricityPlatformError(
+                "电费平台暂未返回该寝室的电量信息", reason="reading_unavailable"
+            )
 
         return {
             "campus": campus,

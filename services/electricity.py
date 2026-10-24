@@ -10,6 +10,7 @@ import os
 import random
 import re
 import tempfile
+from collections import Counter
 from datetime import datetime, time, timedelta, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +35,11 @@ class AccountPoolConfigurationError(RuntimeError):
 
 
 class ElectricityQueryError(RuntimeError):
-    """账户池中的所有账户均无法获取读数时抛出。"""
+    """账户池中的所有账户均无法获取读数；固定原因可聚合，消息保持原契约。"""
+
+    def __init__(self, message: str, *, reason: str = "unknown"):
+        super().__init__(message)
+        self.reason = ElectricityPlatformError.safe_reason(reason)
 
 
 class AccountNotFoundError(RuntimeError):
@@ -382,6 +387,7 @@ class ElectricityService:
         room_number = normalize_room_number(room_number)
         accounts = await self.account_pool.rotated_accounts()
         platform_error: ElectricityPlatformError | None = None
+        failure_reasons: set[str] = set()
         for account in accounts:
             try:
                 result = await self._query_account(account, room_number, campus)
@@ -389,14 +395,27 @@ class ElectricityService:
                 return result
             except ElectricityPlatformError as exc:
                 platform_error = exc
+                failure_reasons.add(exc.reason)
                 await self.cookie_cache.delete(account.cache_key)
             except Exception:
+                failure_reasons.add("unknown")
                 await self.cookie_cache.delete(account.cache_key)
                 continue
 
+        reason = (
+            next(iter(failure_reasons))
+            if len(failure_reasons) == 1
+            else "mixed"
+            if failure_reasons
+            else "unknown"
+        )
         if platform_error is not None:
-            raise ElectricityQueryError(str(platform_error)) from platform_error
-        raise ElectricityQueryError("电费查询失败，请检查账号池或稍后重试")
+            raise ElectricityQueryError(
+                str(platform_error), reason=reason
+            ) from platform_error
+        raise ElectricityQueryError(
+            "电费查询失败，请检查账号池或稍后重试", reason=reason
+        )
 
     async def refresh_room_catalog(self) -> dict[str, Any]:
         """锁内轮换账户发现目录并复用会话；公开目录不含凭据、余额或私有房间 ID。
@@ -683,6 +702,20 @@ class ElectricityService:
             next_index = min(max(0, next_index), len(rooms))
             succeeded = 0
             failed = 0
+            reason_counts: Counter[str] = Counter()
+
+            def collection_result() -> dict[str, int]:
+                """正常与跨窗口结束共用汇总，取消仍直接传播。"""
+                if failed:
+                    logger.warning(
+                        "Daily electricity collection incomplete: succeeded=%s failed=%s retry_missing=%s reason_counts=%s count_unit=catalog_row",
+                        succeeded,
+                        failed,
+                        retry_missing,
+                        dict(sorted(reason_counts.items())),
+                    )
+                return {"succeeded": succeeded, "failed": failed}
+
             loop = asyncio.get_running_loop()
             first_batch_at = loop.time()
             for batch_index in range(next_index, len(rooms), batch_size):
@@ -704,10 +737,7 @@ class ElectricityService:
                                     if datetime.now(
                                         ZoneInfo("Asia/Shanghai")
                                     ).time() >= time(11):
-                                        return {
-                                            "succeeded": succeeded,
-                                            "failed": failed,
-                                        }
+                                        return collection_result()
                                     if not await self._retry_room_due(
                                         room["campus"], room["room_number"]
                                     ):
@@ -729,8 +759,17 @@ class ElectricityService:
                                 )
                         else:
                             await self.query(room["room_number"], room["campus"])
-                    except (AccountPoolConfigurationError, ElectricityQueryError):
+                    except (
+                        AccountPoolConfigurationError,
+                        ElectricityQueryError,
+                    ) as exc:
                         failed += 1
+                        reason = (
+                            "account_pool"
+                            if isinstance(exc, AccountPoolConfigurationError)
+                            else ElectricityPlatformError.safe_reason(exc.reason)
+                        )
+                        reason_counts[reason] += 1
                     else:
                         succeeded += 1
                 if not retry_missing and retry_rooms is None:
@@ -749,14 +788,7 @@ class ElectricityService:
                         "total": catalog_total,
                     }
                 )
-            if failed:
-                logger.warning(
-                    "Daily electricity collection incomplete: succeeded=%s failed=%s retry_missing=%s",
-                    succeeded,
-                    failed,
-                    retry_missing,
-                )
-            return {"succeeded": succeeded, "failed": failed}
+            return collection_result()
 
     async def _retry_room_due(self, campus: str, room: str) -> bool:
         """后台重采至少间隔60分钟；失败及前台尝试也记冷却。"""
