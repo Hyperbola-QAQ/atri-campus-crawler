@@ -129,7 +129,8 @@ async def test_failed_attempt_also_cools_down_for_60_minutes(service):
     assert (await value.reading_cache.get("area", "06627"))["balance"] == 22.44
 
 
-async def test_deadline_is_checked_between_rooms(service):
+async def test_deadline_is_checked_between_rooms(service, caplog):
+    caplog.set_level("INFO", logger="services.electricity")
     value, state = service
     state["now"] = state["now"].replace(hour=2, minute=59)
     await seed(value, state)
@@ -151,6 +152,9 @@ async def test_deadline_is_checked_between_rooms(service):
     )
     assert result == {"succeeded": 1, "failed": 0}
     assert value.query_live.await_count == 1
+    assert background_summaries(caplog) == [
+        {"attempted": 1, "locked_due": 1, "outside_window": 1, "prefilter_due": 2}
+    ]
     await value.collect_room_readings(retry_rooms=[("area", "06628")])
     assert value.query_live.await_count == 1
 
@@ -511,3 +515,140 @@ async def test_crossing_deadline_reports_prior_failure_exactly_once(service, cap
     assert len(records) == 1
     assert "reason_counts={'http_request': 1}" in records[0].getMessage()
     assert "private-response" not in records[0].getMessage()
+
+
+def background_summaries(caplog):
+    import ast
+
+    marker = "Electricity background recheck summary: counters="
+    return [
+        {
+            k: v
+            for k, v in ast.literal_eval(
+                record.getMessage().split(marker, 1)[1].split(" count_unit=", 1)[0]
+            ).items()
+            if v
+        }
+        for record in caplog.records
+        if marker in record.getMessage()
+    ]
+
+
+async def test_recheck_summary_observes_actual_attempt_without_private_values(
+    service, caplog
+):
+    caplog.set_level("INFO", logger="services.electricity")
+    value, state = service
+    await seed(value, state)
+
+    async def observed_live(room, campus):
+        attempted = await value.retry_cache.get(campus, room)
+        assert attempted == {"attempted_at": state["now"].isoformat()}
+        return {
+            "meter_number": "private-meter",
+            "balance": 16.47,
+            "collected_at": state["now"].isoformat(),
+        }
+
+    value.query_live.side_effect = observed_live
+    assert await value.collect_room_readings(retry_rooms=[("area", "06627")]) == {
+        "succeeded": 1,
+        "failed": 0,
+    }
+    assert background_summaries(caplog) == [
+        {"attempted": 1, "locked_due": 1, "prefilter_due": 1}
+    ]
+    message = next(
+        r.getMessage()
+        for r in caplog.records
+        if "background recheck summary:" in r.getMessage()
+    )
+    assert "count_unit=gate_evaluation" in message
+    assert "'locked_not_due': 0" in message
+    assert all(
+        private not in message
+        for private in ["06627", "area", "private-meter", "16.47"]
+    )
+    value.query_live.assert_awaited_once_with("06627", "area")
+
+
+async def test_recheck_summary_observes_3599_and_3600_seconds_after_failure(
+    service, caplog
+):
+    caplog.set_level("INFO", logger="services.electricity")
+    value, state = service
+    await seed(value, state)
+    value.query_live.side_effect = ElectricityQueryError("private-error")
+    await value.collect_room_readings(retry_rooms=[("area", "06627")])
+    state["now"] += timedelta(seconds=3599)
+    await value.collect_room_readings(retry_rooms=[("area", "06627")])
+    assert value.query_live.await_count == 1
+    assert background_summaries(caplog)[-1] == {"prefilter_not_due": 1}
+    state["now"] += timedelta(seconds=1)
+    await value.collect_room_readings(retry_rooms=[("area", "06627")])
+    assert value.query_live.await_count == 2
+    assert background_summaries(caplog)[-1] == {
+        "attempted": 1,
+        "locked_due": 1,
+        "prefilter_due": 1,
+    }
+    assert "private-error" not in caplog.text
+
+
+async def test_recheck_summary_counts_lock_recheck_without_attempt(
+    service, monkeypatch, caplog
+):
+    caplog.set_level("INFO", logger="services.electricity")
+    value, _ = service
+    monkeypatch.setattr(value, "_retry_room_due", AsyncMock(side_effect=[True, False]))
+    assert await value.collect_room_readings(retry_rooms=[("area", "06627")]) == {
+        "succeeded": 0,
+        "failed": 0,
+    }
+    value.query_live.assert_not_awaited()
+    assert background_summaries(caplog) == [{"locked_not_due": 1, "prefilter_due": 1}]
+
+
+async def test_recheck_cancel_does_not_log_false_completion(service, caplog):
+    caplog.set_level("INFO", logger="services.electricity")
+    value, state = service
+    await seed(value, state)
+    value.query_live.side_effect = asyncio.CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        await value.collect_room_readings(retry_rooms=[("area", "06627")])
+    assert background_summaries(caplog) == []
+    assert await value.retry_cache.get("area", "06627") == {
+        "attempted_at": state["now"].isoformat()
+    }
+
+
+async def test_front_attempt_during_room_lock_wait_is_observed_without_background_query(
+    service, caplog
+):
+    caplog.set_level("INFO", logger="services.electricity")
+    value, state = service
+    await seed(value, state)
+    key = ("area", "06627")
+    lock = value._query_locks.setdefault(key, asyncio.Lock())
+    await lock.acquire()
+    prefiltered = asyncio.Event()
+    original_due = value._retry_room_due
+
+    async def observe_gate(campus, room):
+        due = await original_due(campus, room)
+        prefiltered.set()
+        return due
+
+    value._retry_room_due = observe_gate
+    task = asyncio.create_task(
+        value.collect_room_readings(retry_rooms=[key], interval_seconds=0.001)
+    )
+    try:
+        await asyncio.wait_for(prefiltered.wait(), timeout=1)
+        # 模拟既有前台尝试写入；不调用真实前台或平台。
+        await value.retry_cache.set(*key, {"attempted_at": state["now"].isoformat()})
+    finally:
+        lock.release()
+    assert await asyncio.wait_for(task, timeout=1) == {"succeeded": 0, "failed": 0}
+    value.query_live.assert_not_awaited()
+    assert background_summaries(caplog) == [{"locked_not_due": 1, "prefilter_due": 1}]

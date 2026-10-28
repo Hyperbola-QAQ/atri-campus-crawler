@@ -674,6 +674,14 @@ class ElectricityService:
                     if await self.reading_cache.get(room["campus"], room["room_number"])
                     is None
                 ]
+            recheck_counts = {
+                "prefilter_due": 0,
+                "prefilter_not_due": 0,
+                "locked_due": 0,
+                "locked_not_due": 0,
+                "outside_window": 0,
+                "attempted": 0,
+            }
             if retry_rooms is not None:
                 requested = {
                     (
@@ -682,12 +690,17 @@ class ElectricityService:
                     )
                     for campus, room in retry_rooms
                 }
-                rooms = [
-                    room
-                    for room in rooms
-                    if (room["campus"], room["room_number"]) in requested
-                    and await self._retry_room_due(room["campus"], room["room_number"])
-                ]
+                eligible_rooms = []
+                for room in rooms:
+                    if (room["campus"], room["room_number"]) not in requested:
+                        continue
+                    due = await self._retry_room_due(
+                        room["campus"], room["room_number"]
+                    )
+                    recheck_counts["prefilter_due" if due else "prefilter_not_due"] += 1
+                    if due:
+                        eligible_rooms.append(room)
+                rooms = eligible_rooms
             collection_date = self._collection_date()
             state = self._read_collection_state()
             next_index = (
@@ -714,6 +727,11 @@ class ElectricityService:
                         retry_missing,
                         dict(sorted(reason_counts.items())),
                     )
+                if retry_rooms is not None:
+                    logger.info(
+                        "Electricity background recheck summary: counters=%s count_unit=gate_evaluation",
+                        dict(sorted(recheck_counts.items())),
+                    )
                 return {"succeeded": succeeded, "failed": failed}
 
             loop = asyncio.get_running_loop()
@@ -737,10 +755,15 @@ class ElectricityService:
                                     if datetime.now(
                                         ZoneInfo("Asia/Shanghai")
                                     ).time() >= time(11):
+                                        recheck_counts["outside_window"] += 1
                                         return collection_result()
-                                    if not await self._retry_room_due(
+                                    due = await self._retry_room_due(
                                         room["campus"], room["room_number"]
-                                    ):
+                                    )
+                                    recheck_counts[
+                                        "locked_due" if due else "locked_not_due"
+                                    ] += 1
+                                    if not due:
                                         continue
                                     await self.retry_cache.set(
                                         room["campus"],
@@ -751,6 +774,7 @@ class ElectricityService:
                                             ).isoformat()
                                         },
                                     )
+                                    recheck_counts["attempted"] += 1
                                 result = await self.query_live(
                                     room["room_number"], room["campus"]
                                 )
