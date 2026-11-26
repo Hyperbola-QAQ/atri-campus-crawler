@@ -166,12 +166,18 @@ async def test_health_is_available():
 
 
 @pytest.mark.asyncio
-async def test_startup_override_skips_all_network_work(monkeypatch):
+async def test_startup_override_skips_all_network_work(monkeypatch, caplog):
     monkeypatch.setenv("ELECTRICITY_SKIP_STARTUP_RECOVERY", "true")
     service = AsyncMock()
     get_service = AsyncMock(return_value=service)
     monkeypatch.setattr(main, "get_electricity_service", get_service)
     await main._initial_electricity_sync()
+    assert any(
+        record.levelname == "WARNING"
+        and record.getMessage()
+        == "Electricity startup recovery skipped by deployment override"
+        for record in caplog.records
+    )
     get_service.assert_not_awaited()
     service.refresh_room_catalog.assert_not_awaited()
     service.resume_today_collection.assert_not_awaited()
