@@ -135,6 +135,9 @@ async def _initial_electricity_sync() -> None:
     """先恢复同日断点再刷新目录、仅补缺失；阶段失败不阻止后续阶段。
     两次缺失检查遵循结算窗口，不因重启强制全量刷新。
     """
+    if os.getenv("ELECTRICITY_SKIP_STARTUP_RECOVERY") == "true":
+        logger.warning("Electricity startup recovery skipped by deployment override")
+        return
     service = await get_electricity_service()
     try:
         if await service.needs_today_collection():

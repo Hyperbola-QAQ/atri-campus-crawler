@@ -652,3 +652,36 @@ async def test_front_attempt_during_room_lock_wait_is_observed_without_backgroun
     assert await asyncio.wait_for(task, timeout=1) == {"succeeded": 0, "failed": 0}
     value.query_live.assert_not_awaited()
     assert background_summaries(caplog) == [{"locked_not_due": 1, "prefilter_due": 1}]
+
+
+async def test_meter_detail_is_aggregated_without_private_fields(service, caplog):
+    value, _ = service
+    value.query_live.side_effect = [
+        ElectricityQueryError(
+            "private-response", reason="meter_unavailable", meter_detail="missing_info"
+        ),
+        ElectricityQueryError(
+            "private-response", reason="meter_unavailable", meter_detail="unsuccessful"
+        ),
+    ]
+    assert await value.collect_room_readings(force=True, interval_seconds=0.001) == {
+        "succeeded": 0,
+        "failed": 2,
+    }
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "reason_counts={'meter_unavailable': 2}" in message for message in messages
+    )
+    assert any(
+        "counts={'missing_info': 1, 'unsuccessful': 1}" in message
+        for message in messages
+    )
+    assert any(
+        record.levelname == "WARNING"
+        and "Electricity meter failure detail:" in record.getMessage()
+        for record in caplog.records
+    )
+    assert all(
+        "private-response" not in message and "06627" not in message
+        for message in messages
+    )

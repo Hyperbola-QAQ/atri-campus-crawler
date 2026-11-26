@@ -266,3 +266,33 @@ async def test_room_resolution_filters_wrong_options(monkeypatch):
         await portal._resolve_room_selections(None, "csrf", "invalid", "hanpu")
     with pytest.raises(ElectricityPlatformError, match="未找到"):
         await portal._resolve_room_selections(None, "csrf", "06417", "unavailable")
+
+
+@pytest.mark.parametrize(
+    ("response", "detail", "requests"),
+    [
+        ({"Content": None}, "missing_info", 3),
+        (
+            {"Content": {"Succ": False, "CzThirdInfo": {"Balance": 1}}},
+            "unsuccessful",
+            1,
+        ),
+    ],
+)
+async def test_meter_detail_keeps_existing_reason_and_retry_count(
+    monkeypatch, response, detail, requests
+):
+    portal = HNUCMElectricityClient()
+    monkeypatch.setattr(
+        portal, "_resolve_room_selections", AsyncMock(return_value=[{}])
+    )
+    monkeypatch.setattr(module.asyncio, "sleep", AsyncMock())
+    client = AsyncMock()
+    client.post.return_value = httpx.Response(
+        200, json=response, request=httpx.Request("POST", "https://example.test")
+    )
+    with pytest.raises(ElectricityPlatformError) as caught:
+        await portal._get_electricity(client, "csrf", "06417", "hanpu")
+    assert caught.value.reason == "meter_unavailable"
+    assert caught.value.meter_detail == detail
+    assert client.post.await_count == requests

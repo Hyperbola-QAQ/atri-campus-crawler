@@ -37,9 +37,16 @@ class ElectricityPlatformError(RuntimeError):
             else "unknown"
         )
 
-    def __init__(self, message: str, *, reason: str = "unknown"):
+    def __init__(
+        self, message: str, *, reason: str = "unknown", meter_detail: str | None = None
+    ):
         super().__init__(message)
         self.reason = self.safe_reason(reason)
+        self.meter_detail = (
+            meter_detail
+            if meter_detail in {"missing_info", "unsuccessful", "mixed", "unknown"}
+            else None
+        )
 
 
 def _jsbn_hex_to_base64(value: str) -> str:
@@ -399,17 +406,24 @@ class HNUCMElectricityClient:
         campus: str,
     ) -> dict[str, Any]:
         """查询已消歧的寝室；无可用读数时抛出异常，不生成零余额。"""
+        details: set[str] = set()
         for room_selection in await self._resolve_room_selections(
             client, csrf_token, room_number, campus
         ):
             result = await self._get_electricity_for_selection(
-                client, csrf_token, room_number, campus, room_selection
+                client, csrf_token, room_number, campus, room_selection, details
             )
             if result is not None:
                 return result
 
         raise ElectricityPlatformError(
-            "电费平台暂未返回该寝室的电表信息", reason="meter_unavailable"
+            "电费平台暂未返回该寝室的电表信息",
+            reason="meter_unavailable",
+            meter_detail=next(iter(details))
+            if len(details) == 1
+            else "mixed"
+            if details
+            else None,
         )
 
     async def _resolve_room_selections(
@@ -565,6 +579,7 @@ class HNUCMElectricityClient:
         room_number: str,
         campus: str,
         room_selection: dict[str, Any],
+        meter_details: set[str] | None = None,
     ) -> dict[str, Any] | None:
         """将选择 ID 编为 rybh 内嵌 JSON，兼容顶层或 d 包装响应。
 
@@ -605,12 +620,16 @@ class HNUCMElectricityClient:
             content = result.get("Content")
             if isinstance(content, dict) and content.get("CzThirdInfo"):
                 if content.get("Succ") is False:
+                    if meter_details is not None:
+                        meter_details.add("unsuccessful")
                     return None
                 return self._serialize_result(
                     room_number, campus, content["CzThirdInfo"]
                 )
             if attempt < 2:
                 await asyncio.sleep(0.25)
+        if meter_details is not None:
+            meter_details.add("missing_info")
         return None
 
     @staticmethod

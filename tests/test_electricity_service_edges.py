@@ -329,3 +329,33 @@ async def test_schedule_sleep_clamps_past_time(monkeypatch):
         datetime.now(ZoneInfo("Asia/Shanghai")) - timedelta(seconds=1)
     )
     sleep.assert_awaited_once_with(0)
+
+
+@pytest.mark.parametrize(
+    ("details", "expected"),
+    [
+        (["missing_info", "missing_info"], "missing_info"),
+        (["missing_info", "unsuccessful"], "mixed"),
+        (["missing_info", None], "mixed"),
+    ],
+)
+async def test_meter_detail_preserves_coarse_reason_across_accounts(
+    service, details, expected
+):
+    service.account_pool.rotated_accounts = AsyncMock(
+        return_value=[SimpleNamespace(cache_key="a"), SimpleNamespace(cache_key="b")]
+    )
+    service.cookie_cache.delete = AsyncMock()
+    service._query_account = AsyncMock(
+        side_effect=[
+            ElectricityPlatformError(
+                "private", reason="meter_unavailable", meter_detail=detail
+            )
+            for detail in details
+        ]
+    )
+    with pytest.raises(ElectricityQueryError) as caught:
+        await service.query_live("06417", "hanpu")
+    assert caught.value.reason == "meter_unavailable"
+    assert caught.value.meter_detail == expected
+    assert service._query_account.await_count == 2
