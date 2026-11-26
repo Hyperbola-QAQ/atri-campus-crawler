@@ -166,6 +166,36 @@ async def test_health_is_available():
 
 
 @pytest.mark.asyncio
+async def test_startup_override_skips_all_network_work(monkeypatch):
+    monkeypatch.setenv("ELECTRICITY_SKIP_STARTUP_RECOVERY", "true")
+    service = AsyncMock()
+    get_service = AsyncMock(return_value=service)
+    monkeypatch.setattr(main, "get_electricity_service", get_service)
+    await main._initial_electricity_sync()
+    get_service.assert_not_awaited()
+    service.refresh_room_catalog.assert_not_awaited()
+    service.resume_today_collection.assert_not_awaited()
+    service.collect_room_readings.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_override_removal_restores_recovery(monkeypatch):
+    monkeypatch.setenv("ELECTRICITY_SKIP_STARTUP_RECOVERY", "true")
+    service = AsyncMock()
+    service.needs_today_collection.return_value = True
+    monkeypatch.setattr(
+        main, "get_electricity_service", AsyncMock(return_value=service)
+    )
+    await main._initial_electricity_sync()
+    service.refresh_room_catalog.assert_not_awaited()
+    monkeypatch.delenv("ELECTRICITY_SKIP_STARTUP_RECOVERY")
+    await main._initial_electricity_sync()
+    service.refresh_room_catalog.assert_awaited_once_with()
+    service.resume_today_collection.assert_awaited_once_with()
+    service.collect_room_readings.assert_awaited_once_with(retry_missing=True)
+
+
+@pytest.mark.asyncio
 async def test_startup_collects_when_today_cache_is_missing(monkeypatch):
     service = AsyncMock()
     service.needs_today_collection.return_value = True

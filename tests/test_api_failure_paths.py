@@ -175,6 +175,27 @@ async def test_lifespan_stops_schedule_and_background_task(monkeypatch, complete
     assert application.state.electricity_catalog_task.cancelled() is not complete
 
 
+async def test_lifespan_override_keeps_schedule_without_startup_collection(monkeypatch):
+    monkeypatch.setenv("ELECTRICITY_SKIP_STARTUP_RECOVERY", "true")
+    service = AsyncMock()
+    schedule = SimpleNamespace(start=Mock(), stop=AsyncMock())
+    monkeypatch.setattr(
+        main, "get_electricity_service", AsyncMock(return_value=service)
+    )
+    monkeypatch.setattr(main, "ElectricitySchedule", lambda service: schedule)
+    monkeypatch.setattr(main, "close_redis_client", AsyncMock())
+    application = SimpleNamespace(state=SimpleNamespace())
+    async with main.lifespan(application):
+        await application.state.electricity_catalog_task
+        schedule.start.assert_called_once_with(
+            startup_task=application.state.electricity_catalog_task
+        )
+        service.refresh_room_catalog.assert_not_awaited()
+        service.resume_today_collection.assert_not_awaited()
+        service.collect_room_readings.assert_not_awaited()
+    schedule.stop.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     "action", ["login", "get_profile", "get_grades", "get_course_schedule"]
 )
