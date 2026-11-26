@@ -37,9 +37,16 @@ class AccountPoolConfigurationError(RuntimeError):
 class ElectricityQueryError(RuntimeError):
     """账户池中的所有账户均无法获取读数；固定原因可聚合，消息保持原契约。"""
 
-    def __init__(self, message: str, *, reason: str = "unknown"):
+    def __init__(
+        self, message: str, *, reason: str = "unknown", meter_detail: str | None = None
+    ):
         super().__init__(message)
         self.reason = ElectricityPlatformError.safe_reason(reason)
+        self.meter_detail = (
+            meter_detail
+            if meter_detail in {"missing_info", "unsuccessful", "mixed", "unknown"}
+            else None
+        )
 
 
 class AccountNotFoundError(RuntimeError):
@@ -388,6 +395,7 @@ class ElectricityService:
         accounts = await self.account_pool.rotated_accounts()
         platform_error: ElectricityPlatformError | None = None
         failure_reasons: set[str] = set()
+        meter_details: set[str] = set()
         for account in accounts:
             try:
                 result = await self._query_account(account, room_number, campus)
@@ -396,6 +404,8 @@ class ElectricityService:
             except ElectricityPlatformError as exc:
                 platform_error = exc
                 failure_reasons.add(exc.reason)
+                if exc.reason == "meter_unavailable":
+                    meter_details.add(exc.meter_detail or "unknown")
                 await self.cookie_cache.delete(account.cache_key)
             except Exception:
                 failure_reasons.add("unknown")
@@ -411,7 +421,17 @@ class ElectricityService:
         )
         if platform_error is not None:
             raise ElectricityQueryError(
-                str(platform_error), reason=reason
+                str(platform_error),
+                reason=reason,
+                meter_detail=(
+                    next(iter(meter_details))
+                    if len(meter_details) == 1
+                    else "mixed"
+                    if meter_details
+                    else None
+                )
+                if reason == "meter_unavailable"
+                else None,
             ) from platform_error
         raise ElectricityQueryError(
             "电费查询失败，请检查账号池或稍后重试", reason=reason
@@ -716,6 +736,7 @@ class ElectricityService:
             succeeded = 0
             failed = 0
             reason_counts: Counter[str] = Counter()
+            meter_detail_counts: Counter[str] = Counter()
 
             def collection_result() -> dict[str, int]:
                 """正常与跨窗口结束共用汇总，取消仍直接传播。"""
@@ -726,6 +747,11 @@ class ElectricityService:
                         failed,
                         retry_missing,
                         dict(sorted(reason_counts.items())),
+                    )
+                if meter_detail_counts:
+                    logger.info(
+                        "Electricity meter failure detail: counts=%s count_unit=catalog_row",
+                        dict(sorted(meter_detail_counts.items())),
                     )
                 if retry_rooms is not None:
                     logger.info(
@@ -794,6 +820,10 @@ class ElectricityService:
                             else ElectricityPlatformError.safe_reason(exc.reason)
                         )
                         reason_counts[reason] += 1
+                        if reason == "meter_unavailable" and getattr(
+                            exc, "meter_detail", None
+                        ):
+                            meter_detail_counts[exc.meter_detail] += 1
                     else:
                         succeeded += 1
                 if not retry_missing and retry_rooms is None:
