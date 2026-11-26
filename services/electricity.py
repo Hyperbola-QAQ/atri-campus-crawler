@@ -749,7 +749,7 @@ class ElectricityService:
                         dict(sorted(reason_counts.items())),
                     )
                 if meter_detail_counts:
-                    logger.info(
+                    logger.warning(
                         "Electricity meter failure detail: counts=%s count_unit=catalog_row",
                         dict(sorted(meter_detail_counts.items())),
                     )

@@ -655,7 +655,6 @@ async def test_front_attempt_during_room_lock_wait_is_observed_without_backgroun
 
 
 async def test_meter_detail_is_aggregated_without_private_fields(service, caplog):
-    caplog.set_level("INFO", logger="services.electricity")
     value, _ = service
     value.query_live.side_effect = [
         ElectricityQueryError(
@@ -676,6 +675,11 @@ async def test_meter_detail_is_aggregated_without_private_fields(service, caplog
     assert any(
         "counts={'missing_info': 1, 'unsuccessful': 1}" in message
         for message in messages
+    )
+    assert any(
+        record.levelname == "WARNING"
+        and "Electricity meter failure detail:" in record.getMessage()
+        for record in caplog.records
     )
     assert all(
         "private-response" not in message and "06627" not in message
