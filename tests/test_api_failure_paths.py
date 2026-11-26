@@ -196,6 +196,33 @@ async def test_lifespan_override_keeps_schedule_without_startup_collection(monke
     schedule.stop.assert_awaited_once()
 
 
+async def test_real_schedule_waits_after_startup_override(monkeypatch):
+    monkeypatch.setenv("ELECTRICITY_SKIP_STARTUP_RECOVERY", "true")
+    service = AsyncMock()
+    monkeypatch.setattr(
+        main, "get_electricity_service", AsyncMock(return_value=service)
+    )
+    monkeypatch.setattr(main, "close_redis_client", AsyncMock())
+    all_waiting = asyncio.Event()
+    calls = []
+
+    async def wait_for_schedule(self, when):
+        calls.append(when)
+        if len(calls) == 3:
+            all_waiting.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main.ElectricitySchedule, "_sleep_until", wait_for_schedule)
+    application = SimpleNamespace(state=SimpleNamespace())
+    async with main.lifespan(application):
+        await asyncio.wait_for(all_waiting.wait(), timeout=1)
+        assert len(calls) == 3
+        service.refresh_room_catalog.assert_not_awaited()
+        service.resume_today_collection.assert_not_awaited()
+        service.collect_room_readings.assert_not_awaited()
+        service.needs_today_collection.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     "action", ["login", "get_profile", "get_grades", "get_course_schedule"]
 )
